@@ -1,0 +1,112 @@
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f3f5f9;
+  color: #1e293b;
+  font-family: Arial, sans-serif;
+}
+
+button, input {
+  font: inherit;
+}
+
+.app {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 40px 24px;
+}
+
+header {
+  margin-bottom: 32px;
+}
+
+header h1 {
+  margin-bottom: 8px;
+}
+
+header p {
+  color: #64748b;
+}
+
+.search-panel,
+.document-panel {
+  background: white;
+  padding: 24px;
+  margin-bottom: 24px;
+  border-radius: 12px;
+}
+
+h2 {
+  margin-top: 0;
+  font-size: 18px;
+}
+
+form {
+  display: flex;
+  gap: 12px;
+}
+
+input {
+  flex: 1;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+}
+
+button {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 6px;
+  background: #2563eb;
+  color: white;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+}
+
+.result {
+  color: #2563eb;
+  font-weight: bold;
+}
+
+.error {
+  color: #dc2626;
+}
+
+.pdf-page {
+  position: relative;
+  width: 100%;
+  max-width: 600px;
+  height: 500px;
+  margin: 20px auto;
+  border: 1px solid #e2e8f0;
+  background: white;
+  box-shadow: 0 3px 12px #00000012;
+}
+
+.page-label {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.pdf-block {
+  position: absolute;
+  padding: 6px;
+  font-size: 14px;
+  border: 1px dashed #cbd5e1;
+}
+
+.pdf-block.highlight {
+  background: #fde68a;
+  border: 2px solid #f59e0b;
+}

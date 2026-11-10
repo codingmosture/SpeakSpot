@@ -75,3 +75,8 @@ class SessionConfig(BaseModel):
     local_radius_pages: int = Field(ge=0)
     stt_buffer_seconds: float = Field(gt=0)
     stt_update_interval_seconds: float = Field(gt=0)
+
+# 6. 블록 조회 API 응답용
+class DocumentBlocksResponse(BaseModel):
+    document_id: str
+    blocks: list[Block]

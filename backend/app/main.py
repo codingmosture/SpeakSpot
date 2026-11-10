@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from app.api.mock import router as mock_router
+from app.api.documents import router as documents_router
 
 app = FastAPI(
     title="SpeakSpot API",
@@ -18,3 +19,4 @@ def health_check():
 
 
 app.include_router(mock_router)
+app.include_router(documents_router)

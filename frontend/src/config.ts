@@ -10,7 +10,7 @@ import type { SessionConfig } from './types/contracts'
  */
 export const DEFAULT_SESSION_CONFIG: SessionConfig = {
   stt_model: 'faster-whisper-tiny',
-  search_model: 'bge-m3',
+  search_model: 'e5-small',
   search_strategy: 'hybrid',
   local_radius_pages: 1,
   stt_buffer_seconds: 5,

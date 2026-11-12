@@ -7,10 +7,10 @@ interface Props {
   onClear: () => void
 }
 
-const SOURCE_ICON: Record<EntrySource, string> = {
-  'server-stt': '🎙',
-  'browser-stt': '🎤',
-  manual: '⌨',
+const SOURCE_LABEL: Record<EntrySource, string> = {
+  'server-stt': '서버 음성',
+  'browser-stt': '음성',
+  manual: '텍스트',
 }
 
 function formatTime(ms: number) {
@@ -34,7 +34,7 @@ export function Timeline({ entries, activeId, onSelect, onClear }: Props) {
   return (
     <section className="panel timeline">
       <div className="timeline-head">
-        <h2>타임라인</h2>
+        <h2>타임라인 <span className="entry-count">{entries.length}</span></h2>
         {entries.length > 0 && (
           <button type="button" className="btn ghost small" onClick={onClear}>
             초기화
@@ -50,7 +50,7 @@ export function Timeline({ entries, activeId, onSelect, onClear }: Props) {
       )}
 
       {entries.length === 0 ? (
-        <p className="muted">발화가 기록되면 여기에 표시됩니다.</p>
+        <div className="timeline-empty"><p>대화의 흐름을 기록합니다</p><span>음성 인식을 시작하거나 내용을 검색하세요.<br />기록을 선택하면 해당 위치로 이동합니다.</span></div>
       ) : (
         <ol className="timeline-list">
           {[...entries].reverse().map((entry) => {
@@ -61,11 +61,12 @@ export function Timeline({ entries, activeId, onSelect, onClear }: Props) {
                   type="button"
                   className={`timeline-item ${status} ${entry.id === activeId ? 'active' : ''}`}
                   disabled={status !== 'match'}
+                  aria-current={entry.id === activeId ? 'true' : undefined}
                   onClick={() => onSelect(entry)}
                 >
                   <span className="t-meta">
                     <span>{formatTime(entry.createdAt)}</span>
-                    <span>{SOURCE_ICON[entry.source]}</span>
+                    <span>{SOURCE_LABEL[entry.source]}</span>
                   </span>
                   <span className="t-text">{entry.text}</span>
                   <span className={`t-badge ${status}`}>

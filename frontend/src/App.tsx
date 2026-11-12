@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, ApiError } from './api/client'
 import { AppHeader, type ServerStatus } from './components/AppHeader'
-import { ControlPanel, type SttSource, type SttView } from './components/ControlPanel'
+import { ControlPanel } from './components/ControlPanel'
+import { DocumentPanel } from './components/DocumentPanel'
+import { DeveloperPanel } from './components/DeveloperPanel'
+import { RecordingToolbar, type SttSource, type SttView } from './components/RecordingToolbar'
 import { PdfViewer } from './components/PdfViewer'
 import { ResultCard } from './components/ResultCard'
 import { Timeline } from './components/Timeline'
@@ -44,6 +47,7 @@ function App() {
   }, [])
 
   const [notice, setNotice] = useState<string | null>(null)
+  const [developerOpen, setDeveloperOpen] = useState(false)
 
   /* ---------- 문서 · 블록 · PDF ---------- */
   const [activeDoc, setActiveDoc] = useState<Document | null>(null)
@@ -464,7 +468,10 @@ function App() {
 
   return (
     <div className="app">
-      <AppHeader serverStatus={serverStatus} mode={api.mode} />
+      <AppHeader serverStatus={serverStatus} mode={api.mode}
+        developerOpen={developerOpen} onOpenDeveloper={() => setDeveloperOpen(true)} />
+
+      <RecordingToolbar stt={stt} sttSource={sttSource} canSearch={session !== null} />
 
       {notices.length > 0 && (
         <div className="notice error" role="alert">
@@ -475,50 +482,61 @@ function App() {
       )}
 
       <main className="layout">
-        <PdfViewer
-          pdf={pdf}
-          pageCount={activeDoc?.page_count ?? 0}
-          pageNumber={pageNumber}
-          onPageChange={setPageNumber}
-          blocks={pageBlocks}
-          highlight={highlightBlock?.page === pageNumber ? highlightBlock : null}
-          showBlocks={showBlocks}
-          emptyMessage={documentBusy ? 'PDF 업로드·분석 중…' : undefined}
-        />
-
-        <aside className="sidebar">
-          <ControlPanel
+        <div className="document-workspace">
+          <DocumentPanel
             fileName={activeDoc?.file_name ?? null}
+            pageCount={activeDoc?.page_count ?? 0}
             documentBusy={documentBusy}
+            sttActive={stt.listening || stt.busy}
             onFileSelect={(file) => void handleFileSelect(file)}
-            sttSource={sttSource}
-            onSttSourceChange={setSttSource}
-            serverSttAvailable={api.mode === 'server'}
-            stt={stt}
+          />
+          <PdfViewer
+            pdf={pdf}
+            pageCount={activeDoc?.page_count ?? 0}
+            pageNumber={pageNumber}
+            onPageChange={setPageNumber}
+            blocks={pageBlocks}
+            highlight={highlightBlock?.page === pageNumber ? highlightBlock : null}
+            showBlocks={showBlocks}
+            emptyMessage={documentBusy ? 'PDF 업로드·분석 중…' : undefined}
+          />
+        </div>
+
+        <aside className="sidebar" aria-label="문서 검색과 타임라인">
+          <ControlPanel
             canSearch={session !== null}
             onSubmitText={(text) => void runSearch(text, 'manual')}
             autoFollow={autoFollow}
             onAutoFollowChange={setAutoFollow}
-            showBlocks={showBlocks}
-            onToggleBlocks={setShowBlocks}
-            sessionConfig={sessionConfig}
-            onConfigChange={setSessionConfig}
-            onApplyConfig={applyDeveloperSettings}
-            configBusy={configBusy}
-            configDirty={configDirty}
-            liveWords={liveWords}
-            sttApplyMode={sttApplyMode}
-            onSttApplyModeChange={setSttApplyMode}
           />
-          <ResultCard entry={currentEntry} />
           <Timeline
             entries={entries}
             activeId={highlight?.entryId ?? null}
             onSelect={handleSelectEntry}
             onClear={resetTimeline}
           />
+          <ResultCard entry={currentEntry} />
         </aside>
       </main>
+      <DeveloperPanel
+        open={developerOpen}
+        onClose={() => setDeveloperOpen(false)}
+        sttActive={stt.listening || stt.busy}
+        sttSource={sttSource}
+        onSttSourceChange={setSttSource}
+        serverSttAvailable={api.mode === 'server'}
+        canSearch={session !== null}
+        showBlocks={showBlocks}
+        onToggleBlocks={setShowBlocks}
+        sessionConfig={sessionConfig}
+        onConfigChange={setSessionConfig}
+        onApplyConfig={applyDeveloperSettings}
+        configBusy={configBusy}
+        configDirty={configDirty}
+        liveWords={liveWords}
+        sttApplyMode={sttApplyMode}
+        onSttApplyModeChange={setSttApplyMode}
+      />
     </div>
   )
 }

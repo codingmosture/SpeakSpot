@@ -9,7 +9,14 @@ const STATUS_LABEL: Record<ServerStatus, string> = {
   mock: 'Mock 모드 (백엔드 미사용)',
 }
 
-export function AppHeader({ serverStatus, mode }: { serverStatus: ServerStatus; mode: ApiMode }) {
+interface Props {
+  serverStatus: ServerStatus
+  mode: ApiMode
+  developerOpen: boolean
+  onOpenDeveloper: () => void
+}
+
+export function AppHeader({ serverStatus, mode, developerOpen, onOpenDeveloper }: Props) {
   return (
     <header className="app-header">
       <div className="brand">
@@ -18,14 +25,20 @@ export function AppHeader({ serverStatus, mode }: { serverStatus: ServerStatus; 
         </span>
         <div>
           <h1>SpeakSpot</h1>
-          <p>Follow the speech. Find the spot.</p>
+          <p>문서와 대화를 같은 흐름으로</p>
         </div>
       </div>
-      <span className={`status-badge ${serverStatus}`}>
-        <span className="dot" aria-hidden />
-        {STATUS_LABEL[serverStatus]}
-        {mode === 'legacy' && ' · 초안 API'}
-      </span>
+      <div className="header-actions">
+        <span className={`status-badge ${serverStatus}`} role="status">
+          <span className="dot" aria-hidden />
+          {STATUS_LABEL[serverStatus]}
+          {mode === 'legacy' && ' · 초안 API'}
+        </span>
+        <button type="button" className="btn ghost" aria-haspopup="dialog"
+          aria-controls="developer-panel" aria-expanded={developerOpen} onClick={onOpenDeveloper}>
+          개발자 메뉴 <span aria-hidden>≡</span>
+        </button>
+      </div>
     </header>
   )
 }

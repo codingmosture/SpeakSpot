@@ -30,8 +30,9 @@ export function PdfViewer({
   const hasDocument = pageCount > 0
 
   return (
-    <section className="panel viewer">
+    <section className="viewer" aria-label="PDF 뷰어">
       <div className="viewer-toolbar">
+        <span className="viewer-label">PDF 뷰어</span>
         <div className="pager">
           <button
             type="button"
@@ -42,7 +43,7 @@ export function PdfViewer({
           >
             ‹
           </button>
-          <span className="page-indicator">
+          <span className="page-indicator" aria-live="polite">
             {hasDocument ? (
               <>
                 <strong>{pageNumber}</strong> / {pageCount}
@@ -65,7 +66,11 @@ export function PdfViewer({
 
       <div className="viewer-scroll">
         {!hasDocument ? (
-          <div className="viewer-empty">{emptyMessage ?? 'PDF 문서를 업로드하세요.'}</div>
+          <div className="viewer-empty" role="status">
+            <span className="empty-document-icon" aria-hidden>▤</span>
+            <h2>{emptyMessage ?? '문서에서 시작하세요'}</h2>
+            <p>위의 PDF 업로드로 문서를 열면<br />음성과 텍스트로 내용을 찾을 수 있습니다.</p>
+          </div>
         ) : pdf ? (
           <PdfPage pdf={pdf} pageNumber={pageNumber}>
             <BlockOverlay blocks={blocks} highlight={highlight} showBlocks={showBlocks} />

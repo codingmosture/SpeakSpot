@@ -47,6 +47,9 @@ class SearchSocket:
                 "type": "highlight.update", "payload": result.model_dump(),
             })
 
+    async def receive_json(self):
+        return await self.websocket.receive_json()
+
     async def receive(self):
         return await self.websocket.receive()
 

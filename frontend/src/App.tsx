@@ -211,7 +211,7 @@ function App() {
 
   /* ---------- STT ---------- */
 
-  const [sttSource, setSttSource] = useState<SttSource>(api.mode === 'server' ? 'server' : 'browser')
+  const [sttSource, setSttSource] = useState<SttSource>('browser')
   const streamUrl = sttSource === 'server' && session ? api.streamUrl(session.session_id) : null
 
   // 서버 STT (WebSocket, contracts.md §4)

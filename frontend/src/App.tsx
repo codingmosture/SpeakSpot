@@ -89,17 +89,7 @@ function App() {
   const liveGeneration = useRef(0)
   const liveQueue = useRef<Array<{ text: string; isFinal: boolean; utteranceId: string; sequence: number }>>([])
   const liveSending = useRef(false)
-  const previewVersion = useRef(0)
-  const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const previewText = useRef('')
-  const previewLastRequest = useRef(0)
   const clearPreview = useCallback(() => {
-    previewVersion.current++
-    previewText.current = ''
-    if (previewTimer.current !== null) {
-      clearTimeout(previewTimer.current)
-      previewTimer.current = null
-    }
     setPreviewResult(null)
   }, [])
 
@@ -289,46 +279,6 @@ function App() {
     onSegment: handleSegment,
     onHighlight: handleHighlight,
   })
-
-  // 중간 결과는 화면에만 반영한다. 250ms 간격으로 마지막 버전만 보내고
-  // 먼저 전송한 요청이 나중에 도착하더라도 오래된 하이라이트로 덮지 않는다.
-  const requestPreview = useCallback((text: string, version: number) => {
-    const current = sessionRef.current
-    if (!current || !api.previewSearch) return
-    const sessionId = current.session_id
-    previewLastRequest.current = performance.now()
-    void api.previewSearch({ session_id: sessionId, text, segment_id: null })
-      .then((result) => {
-        if (version !== previewVersion.current || sessionRef.current?.session_id !== sessionId) return
-        setPreviewResult(result.status === 'MATCH' ? result : null)
-        if (result.status === 'MATCH' && result.page != null && autoFollowRef.current) {
-          setPageNumber(result.page)
-        }
-      })
-      .catch(() => {
-        if (version === previewVersion.current) setPreviewResult(null)
-      })
-  }, [])
-
-  const handleInterim = useCallback((text: string) => {
-    previewVersion.current++
-    previewText.current = text.trim()
-    if (!previewText.current) {
-      clearPreview()
-      return
-    }
-    if (previewTimer.current !== null) return
-    const delay = Math.max(0, 250 - (performance.now() - previewLastRequest.current))
-    previewTimer.current = setTimeout(() => {
-      previewTimer.current = null
-      if (previewText.current) requestPreview(previewText.current, previewVersion.current)
-    }, delay)
-  }, [clearPreview, requestPreview])
-
-  useEffect(() => () => {
-    previewVersion.current++
-    if (previewTimer.current !== null) clearTimeout(previewTimer.current)
-  }, [])
 
   // 브라우저 STT의 매 중간 결과를 /search/live로 순서대로 전달한다.
   // 이전 요청이 완료되기 전에는 다음 가설을 대기시켜 큐가 역순으로 바뀌지 않게 한다.

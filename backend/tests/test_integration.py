@@ -113,3 +113,29 @@ def test_non_pdf_and_missing_session():
         not_found = client.get("/api/v1/sessions/not-a-session/timeline")
         assert not_found.status_code == 404
         assert "error" in not_found.json()
+
+
+def test_real_pdf_parser_and_upload(tmp_path):
+    """모의 파서가 아닌 실제 PyMuPDF → Kiwi → 블록 API 전체 흐름."""
+    import pymupdf
+
+    source = pymupdf.open()
+    page = source.new_page()
+    page.insert_text((72, 72), "SpeakSpot actual document text")
+    file_path = tmp_path / "actual.pdf"
+    source.save(str(file_path))
+    source.close()
+
+    with TestClient(app) as client:
+        result = client.post("/api/v1/documents", files={
+            "file": ("actual.pdf", file_path.read_bytes(), "application/pdf"),
+        })
+        assert result.status_code == 201, result.text
+        doc_id = result.json()["document_id"]
+        result = client.get(f"/api/v1/documents/{doc_id}/blocks")
+        assert result.status_code == 200
+        assert any("SpeakSpot" in b["text"] for b in result.json()["blocks"])
+        for block in result.json()["blocks"]:
+            assert all(0 <= v <= 1 for v in block["bbox"])
+            assert block["bbox"][0] < block["bbox"][2]
+            assert block["bbox"][1] < block["bbox"][3]

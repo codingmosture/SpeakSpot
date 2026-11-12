@@ -59,6 +59,20 @@ class PDFParser:
                     b for b in page_dict.get("blocks", []) if b.get("type") == 0
                 ]
 
+                # Remove footer/header page labels before grouping or keyword extraction.
+                # Work in upright coordinates so rotated documents use the same rules.
+                upright = page.rect * page.derotation_matrix
+                filtered_blocks = []
+                for block in raw_text_blocks_initial:
+                    lines = [line for line in block.get("lines", [])
+                             if not self._is_page_number(line, page_num, upright.width, upright.height)]
+                    if lines:
+                        block["lines"] = lines
+                        block["bbox"] = (min(l["bbox"][0] for l in lines), min(l["bbox"][1] for l in lines),
+                                         max(l["bbox"][2] for l in lines), max(l["bbox"][3] for l in lines))
+                        filtered_blocks.append(block)
+                raw_text_blocks_initial = filtered_blocks
+
                 # Text/OCR coordinates are unrotated; the viewer uses display orientation.
                 if page.rotation:
                     for block in raw_text_blocks_initial:
@@ -208,6 +222,26 @@ class PDFParser:
             self._populate_keywords(blocks, page_count, top_k=5)
 
         return page_count, blocks
+
+    @staticmethod
+    def _is_page_number(line: dict, page_number: int, width: float, height: float) -> bool:
+        text = "".join(span.get("text", "") for span in line.get("spans", [])).strip()
+        text = text.strip(" -–—()[]")
+        match = re.fullmatch(
+            r"(?:(?:page|p\.?)\s*)?(\d{1,4})(?:\s*(?:/|of)\s*\d{1,4})?(?:\s*(?:페이지|쪽))?",
+            text, flags=re.IGNORECASE,
+        )
+        if not match:
+            return False
+        # A bare numeric table value must not disappear just because it is small.
+        if text.isdigit() and int(match.group(1)) != page_number:
+            return False
+        x0, y0, x1, y1 = line["bbox"]
+        center = (x0 + x1) / (2 * width)
+        margin = y0 / height >= 0.90 or y1 / height <= 0.10
+        typical_position = center <= 0.2 or center >= 0.8 or 0.4 <= center <= 0.6
+        return (margin and typical_position and (x1 - x0) / width <= 0.2
+                and (y1 - y0) / height <= 0.06)
 
     # -----------------------------------------------------------------------
     # 7종 블록 타입 분류 함수

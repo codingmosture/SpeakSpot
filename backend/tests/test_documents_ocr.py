@@ -38,7 +38,7 @@ def assert_valid_blocks(blocks):
 
 def test_text_only_does_not_invoke_ocr(tmp_path):
     path = make_pdf(tmp_path / "native.pdf")
-    with patch.object(fitz.Page, "get_textpage_ocr", side_effect=AssertionError("unnecessary OCR")):
+    with patch.object(fitz.Pixmap, "pdfocr_tobytes", side_effect=AssertionError("unnecessary OCR")):
         count, blocks = PDFParser().parse(str(path))
     assert count == 1
     assert [b.text for b in blocks] == ["Native document title"]
@@ -47,17 +47,16 @@ def test_text_only_does_not_invoke_ocr(tmp_path):
 
 def test_disabled_ocr_keeps_existing_text(tmp_path):
     path = make_pdf(tmp_path / "mixed.pdf", image=True)
-    with patch.object(fitz.Page, "get_textpage_ocr", side_effect=AssertionError("disabled OCR")):
+    with patch.object(fitz.Pixmap, "pdfocr_tobytes", side_effect=AssertionError("disabled OCR")):
         _, blocks = PDFParser(OCRConfig(enabled=False)).parse(str(path))
     assert [b.text for b in blocks] == ["Native document title"]
 
 
-def test_missing_ocr_data_preserves_native_text_with_warning(tmp_path, caplog):
+def test_mixed_document_does_not_silently_omit_images_without_ocr_data(tmp_path):
     path = make_pdf(tmp_path / "mixed.pdf", image=True)
     config = OCRConfig(tessdata=str(tmp_path / "missing"))
-    _, blocks = PDFParser(config).parse(str(path))
-    assert [b.text for b in blocks] == ["Native document title"]
-    assert "기존 텍스트만 사용" in caplog.text
+    with pytest.raises(ValueError, match="1페이지.*setup_ocr.py"):
+        PDFParser(config).parse(str(path))
 
 
 def test_scan_without_ocr_data_has_actionable_error(tmp_path):
@@ -67,14 +66,45 @@ def test_scan_without_ocr_data_has_actionable_error(tmp_path):
 
 
 @pytest.mark.parametrize("error", [RuntimeError("engine unavailable"), Exception("engine unavailable")])
-def test_engine_failure_preserves_native_text(tmp_path, caplog, error):
+def test_engine_failure_is_visible_for_mixed_documents(tmp_path, error):
     path = make_pdf(tmp_path / "mixed.pdf", image=True)
     (tmp_path / "eng.traineddata").touch()
     config = OCRConfig(language="eng", tessdata=str(tmp_path))
-    with patch.object(fitz.Page, "get_textpage_ocr", side_effect=error):
-        _, blocks = PDFParser(config).parse(str(path))
-    assert blocks[0].text == "Native document title"
-    assert "engine unavailable" in caplog.text
+    with patch.object(fitz.Pixmap, "pdfocr_tobytes", side_effect=error):
+        with pytest.raises(ValueError, match="setup_ocr.py"):
+            PDFParser(config).parse(str(path))
+
+
+def test_decorative_rules_do_not_require_ocr(tmp_path):
+    path = tmp_path / "decoration.pdf"
+    with fitz.open() as doc:
+        page = doc.new_page(width=600, height=700)
+        page.insert_text((50, 60), "Normal document text", fontsize=20)
+        pixmap = fitz.Pixmap(fitz.csRGB, 3, 1, bytes([80, 100, 120] * 3), False)
+        page.insert_image(fitz.Rect(20, 100, 580, 101.5), pixmap=pixmap)
+        doc.save(path)
+    _, blocks = PDFParser(OCRConfig(tessdata=str(tmp_path / "missing"))).parse(str(path))
+    assert [b.text for b in blocks] == ["Normal document text"]
+
+
+@pytest.mark.parametrize("label", ["1", "- 1 -", "(1)", "Page 1", "p.1", "1 / 157", "1 페이지", "1 of 157"])
+@pytest.mark.parametrize("rotation", [0, 90])
+def test_footer_page_labels_are_not_search_blocks(tmp_path, label, rotation):
+    path = tmp_path / "footer.pdf"
+    with fitz.open() as doc:
+        page = doc.new_page(width=600, height=700)
+        page.insert_text((50, 120), "SELECT 1 AS value;", fontsize=14)
+        page.insert_text((280, 350), "1", fontsize=12)
+        page.insert_text((500, 650), "1000", fontsize=10)
+        page.insert_text((500, 680), label, fontsize=9, fontname="korea")
+        page.set_rotation(rotation)
+        doc.save(path)
+    _, blocks = PDFParser(OCRConfig(enabled=False)).parse(str(path))
+    texts = [b.text for b in blocks]
+    assert texts.count("1") == 1  # Numeric body content is preserved.
+    assert "1000" in texts
+    assert "SELECT 1 AS value;" in texts
+    assert len(blocks) == 3
 
 
 def test_ocr_configuration(monkeypatch, tmp_path):
@@ -104,6 +134,36 @@ def test_native_rotated_highlight_coordinates(tmp_path, rotation):
 
 
 REAL_OCR = all((DEFAULT_TESSDATA / f"{lang}.traineddata").is_file() for lang in ("eng", "kor"))
+
+
+@pytest.mark.skipif(not REAL_OCR, reason="Run python scripts/setup_ocr.py for real OCR tests")
+def test_image_table_cells_are_extracted_independently_of_slide_layout(tmp_path):
+    path = tmp_path / "image-table.pdf"
+    with fitz.open() as artwork:
+        table = artwork.new_page(width=600, height=240)
+        for x in [0, 150, 300, 450, 599]:
+            table.draw_line((x, 0), (x, 239), color=(0.7, 0.7, 0.7), width=1)
+        for y in [0, 60, 120, 180, 239]:
+            table.draw_line((0, y), (599, y), color=(0.7, 0.7, 0.7), width=1)
+        rows = [("customer", "name", "age", "balance"), ("apple", "Alice", "20", "1000"),
+                ("banana", "Bob", "25", "2500"), ("orange", "Carol", "22", "0")]
+        for row, values in enumerate(rows):
+            for col, value in enumerate(values):
+                table.insert_text((col * 150 + 12, row * 60 + 38), value, fontsize=20)
+        raster = table.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+    with fitz.open() as doc:
+        page = doc.new_page(width=600, height=700)
+        page.insert_text((50, 60), "Database lecture", fontsize=20)
+        page.insert_text((560, 680), "1", fontsize=10)
+        page.insert_image(fitz.Rect(40, 180, 560, 388), stream=raster.tobytes("png"))
+        doc.save(path)
+    _, blocks = PDFParser(OCRConfig(tessdata=str(DEFAULT_TESSDATA))).parse(str(path))
+    text = " ".join(b.text for b in blocks)
+    assert text.count("Database lecture") == 1
+    for value in ["customer", "apple", "banana", "orange", "1000", "2500"]:
+        assert value in text
+    assert not any(b.text == "1" for b in blocks)
+    assert_valid_blocks(blocks)
 
 
 @pytest.mark.skipif(not REAL_OCR, reason="Run python scripts/setup_ocr.py for real OCR tests")

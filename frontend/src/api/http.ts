@@ -60,7 +60,8 @@ export const httpApi: SpeakSpotApi = {
   uploadDocument: (file) => {
     const form = new FormData()
     form.append('file', file)
-    return request(`${V1}/documents`, { method: 'POST', body: form }, 120_000)
+    // Image-heavy lecture PDFs can need several minutes of local OCR.
+    return request(`${V1}/documents`, { method: 'POST', body: form }, 300_000)
   },
 
   getBlocks: (documentId, page) => {

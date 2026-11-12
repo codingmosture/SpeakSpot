@@ -1,13 +1,12 @@
 """Local OCR for scanned and mixed text/image PDF pages."""
-import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 import pymupdf as fitz
 
 
-logger = logging.getLogger(__name__)
 DEFAULT_TESSDATA = Path(__file__).resolve().parents[2] / ".cache" / "tessdata"
 TEXT_FLAGS = fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES
 
@@ -39,14 +38,10 @@ class OCRConfig:
 def extract_page_text(page: fitz.Page, config: OCRConfig) -> dict:
     # Do not load image binaries into the text dictionary.
     native = page.get_text("dict", flags=TEXT_FLAGS)
-    has_text = any(
-        span.get("text", "").strip()
-        for block in native.get("blocks", []) if block.get("type") == 0
-        for line in block.get("lines", [])
-        for span in line.get("spans", [])
-    )
-    # Visible images include inline images. Unused PDF image resources are ignored.
-    if not config.enabled or not page.get_image_info():
+    if not config.enabled:
+        return native
+    images = _image_regions(page)
+    if not images:
         return native
 
     try:
@@ -64,8 +59,8 @@ def extract_page_text(page: fitz.Page, config: OCRConfig) -> dict:
                 upright.insert_pdf(page.parent, from_page=page.number, to_page=page.number)
                 upright_page = upright[0]
                 upright_page.set_rotation(0)
-                return _recognize(upright_page, config, tessdata, full=not has_text)
-        return _recognize(page, config, tessdata, full=not has_text)
+                return _recognize_images(upright_page, native, images, config, tessdata)
+        return _recognize_images(page, native, images, config, tessdata)
     except Exception as exc:
         # MuPDF's OCR errors may be FzErrorBase, not RuntimeError.
         message = (
@@ -73,17 +68,78 @@ def extract_page_text(page: fitz.Page, config: OCRConfig) -> dict:
             "backend에서 python scripts/setup_ocr.py를 실행하거나 "
             "SPEAKSPOT_OCR_TESSDATA와 OCR 언어 데이터를 확인하세요."
         )
-        if has_text:
-            # An unavailable OCR engine must not break existing text PDFs.
-            logger.warning("%s 기존 텍스트만 사용합니다. (%s)", message, exc)
-            return native
+        # Do not report a mixed document as ready while silently dropping its images.
         raise ValueError(message) from exc
 
 
-def _recognize(page: fitz.Page, config: OCRConfig, tessdata: str, *, full: bool) -> dict:
-    textpage = page.get_textpage_ocr(
-        flags=TEXT_FLAGS, language=config.language, dpi=config.dpi,
-        full=full, tessdata=tessdata,
-    )
-    # Partial OCR retains native text properties and adds image text once.
-    return page.get_text("dict", textpage=textpage)
+def _image_regions(page: fitz.Page) -> list[fitz.Rect]:
+    bounds = page.rect * page.derotation_matrix
+    regions = []
+    seen = set()
+    for image in page.get_image_info():
+        rect = fitz.Rect(image["bbox"]) & bounds
+        # Slide separators and one-pixel decorations are not text-bearing images.
+        if rect.is_empty:
+            continue
+        short, long = sorted((rect.width, rect.height))
+        if long < 8 or (short < 3 and long / short > 20):
+            continue
+        key = tuple(round(value, 2) for value in rect)
+        if key not in seen:
+            seen.add(key)
+            regions.append(rect)
+    return regions
+
+
+def _line_text(line: dict) -> str:
+    return re.sub(r"\s+", "", "".join(s.get("text", "") for s in line.get("spans", []))).casefold()
+
+
+def _duplicate_line(line: dict, existing: list[dict]) -> bool:
+    rect = fitz.Rect(line["bbox"])
+    text = _line_text(line)
+    for other in existing:
+        other_rect = fitz.Rect(other["bbox"])
+        overlap = (rect & other_rect).get_area()
+        if overlap <= 0 or min(rect.get_area(), other_rect.get_area()) <= 0:
+            continue
+        same_text = text == _line_text(other)
+        if same_text and overlap / min(rect.get_area(), other_rect.get_area()) > 0.5:
+            return True
+        if overlap / rect.get_area() > 0.8 and overlap / other_rect.get_area() > 0.6:
+            return True
+    return False
+
+
+def _recognize_images(page: fitz.Page, native: dict, regions: list[fitz.Rect],
+                      config: OCRConfig, tessdata: str) -> dict:
+    blocks = list(native.get("blocks", []))
+    existing = [line for block in blocks for line in block.get("lines", [])]
+    zoom = config.dpi / 72
+    for region in regions:
+        # OCR each image crop independently. Full-page layout detection misses cells
+        # in slide screenshots and can take longer than the upload timeout.
+        pixmap = page.get_pixmap(dpi=config.dpi, clip=region, alpha=False)
+        data = pixmap.pdfocr_tobytes(language=config.language, tessdata=tessdata)
+        with fitz.open(stream=data, filetype="pdf") as recognized:
+            ocr_page = recognized[0]
+            target = fitz.Rect(pixmap.x / zoom, pixmap.y / zoom,
+                               (pixmap.x + pixmap.width) / zoom, (pixmap.y + pixmap.height) / zoom)
+            matrix = ocr_page.rect.torect(target)
+            for block in ocr_page.get_text("dict", flags=TEXT_FLAGS).get("blocks", []):
+                lines = []
+                for line in block.get("lines", []):
+                    line["bbox"] = tuple(fitz.Rect(line["bbox"]) * matrix)
+                    for span in line.get("spans", []):
+                        span["bbox"] = tuple(fitz.Rect(span["bbox"]) * matrix)
+                        if "origin" in span:
+                            span["origin"] = tuple(fitz.Point(span["origin"]) * matrix)
+                    if _line_text(line) and not _duplicate_line(line, existing):
+                        lines.append(line)
+                        existing.append(line)
+                if lines:
+                    block["lines"] = lines
+                    block["bbox"] = (min(l["bbox"][0] for l in lines), min(l["bbox"][1] for l in lines),
+                                     max(l["bbox"][2] for l in lines), max(l["bbox"][3] for l in lines))
+                    blocks.append(block)
+    return {**native, "blocks": blocks}

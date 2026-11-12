@@ -4,7 +4,7 @@ import type { SessionConfig } from './types/contracts'
  * 세션 생성 시 보내는 고정 설정 (contracts.md §2.5, §3.4 — config 필수).
  *
  * 사용자는 모델·전략을 고르지 않는다 (팀 회의 결정):
- * - 기본 탐색: 최근 40개 단어를 사용하는 슬라이딩 큐, 현재 페이지 ±5페이지만 검색.
+ * - 기본 탐색: 최근 15개 단어를 사용하는 슬라이딩 큐, 현재 페이지 ±5페이지만 검색.
  * - 슬라이딩 큐는 임베딩 모델을 사용하지 않으므로 search_model은 null이다.
  * - STT 모델은 현재 faster-whisper tiny로 고정하며, 필요 시 변경한다.
  */
@@ -13,6 +13,7 @@ export const DEFAULT_SESSION_CONFIG: SessionConfig = {
   search_model: null,
   search_strategy: 'sliding_queue',
   local_radius_pages: 5,
+  sliding_window_words: 15,
   stt_buffer_seconds: 5,
   stt_update_interval_seconds: 2,
 }

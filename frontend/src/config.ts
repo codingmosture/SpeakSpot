@@ -4,15 +4,15 @@ import type { SessionConfig } from './types/contracts'
  * 세션 생성 시 보내는 고정 설정 (contracts.md §2.5, §3.4 — config 필수).
  *
  * 사용자는 모델·전략을 고르지 않는다 (팀 회의 결정):
- * - 탐색: Local → 실패 시 Global → 그래도 실패하면 이전 하이라이트 유지. 조정은 backend 담당.
- * - STT·탐색 모델: 실험으로 가장 성능이 좋은 조합을 선정해 고정한다.
- *   모델 이름은 현재 contracts.md 예시값이므로, 최종 조합이 정해지면 여기 값을 갱신한다.
+ * - 기본 탐색: 최근 40개 단어를 사용하는 슬라이딩 큐, 현재 페이지 ±5페이지만 검색.
+ * - 슬라이딩 큐는 임베딩 모델을 사용하지 않으므로 search_model은 null이다.
+ * - STT 모델은 현재 faster-whisper tiny로 고정하며, 필요 시 변경한다.
  */
 export const DEFAULT_SESSION_CONFIG: SessionConfig = {
   stt_model: 'faster-whisper-tiny',
-  search_model: 'e5-small',
-  search_strategy: 'hybrid',
-  local_radius_pages: 1,
+  search_model: null,
+  search_strategy: 'sliding_queue',
+  local_radius_pages: 5,
   stt_buffer_seconds: 5,
   stt_update_interval_seconds: 2,
 }

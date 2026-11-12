@@ -2,7 +2,8 @@
 
 - 최근 N개 단어만 점수에 반영 (시간에 따른 누적 점수 없음)
 - 현재 페이지 ±R 범위의 PDF 블록만 탐색
-- 한국어 단어 원형 보존, 접미사·조사 형태만 보수적으로 매칭
+- 큐의 원문 단어는 보존, 비교 시 한국어 형태소·SQL 발음 표기를 정규화
+- 최신 발화를 우선하고 페이지 문맥과 블록 일치를 함께 비교
 - 현재 페이지 유지 보너스 / 과거 페이지 감점 / 최소 점수로 오이동 억제
 - 찾지 못했으면 NONE (현재 페이지는 그대로)
 """
@@ -13,6 +14,7 @@ from typing import Sequence
 from app.schemas.models import Block
 from app.search.algorithms.base import AlgorithmResult, SearchAlgorithm
 from app.search.config import SearchSettings
+from app.search.lexical import lexical_terms
 from app.search.tokenizer import matches, tokenize
 
 
@@ -29,6 +31,7 @@ class SlidingQueueSearch(SearchAlgorithm):
         # 브라우저 STT의 현재 미확정 단어는 매 갱신마다 교체한다.
         self._live_words: tuple[str, ...] = ()
         self._block_tokens: dict[str, tuple[str, ...]] = {}
+        self._page_tokens: dict[int, tuple[str, ...]] = {}
         self._idf: dict[str, float] = {}
         self._build_index()
 
@@ -39,14 +42,19 @@ class SlidingQueueSearch(SearchAlgorithm):
 
     def _build_index(self) -> None:
         counts: Counter[str] = Counter()
+        pages: dict[int, list[str]] = {}
         for block in self.blocks:
             if block.block_id in self._block_tokens:
                 raise ValueError(f'중복 block_id: {block.block_id}')
-            words = tuple(tokenize(block.text) + [term for keyword in block.keywords for term in tokenize(keyword)])
+            words = lexical_terms(block.text) + tuple(
+                term for keyword in block.keywords for term in lexical_terms(keyword)
+            )
             self._block_tokens[block.block_id] = words
+            pages.setdefault(block.page, []).extend(words)
             counts.update(set(words))
         total = len(self.blocks)
         self._idf = {word: log((total + 1) / (count + 1)) + 1.0 for word, count in counts.items()}
+        self._page_tokens = {page: tuple(words) for page, words in pages.items()}
 
     def _term_idf(self, word: str) -> float:
         # 일치하는 문서 토큰의 최대 IDF를 사용한다.
@@ -54,8 +62,7 @@ class SlidingQueueSearch(SearchAlgorithm):
             return self._idf[word]
         return max((weight for term, weight in self._idf.items() if matches(word, term)), default=1.0)
 
-    def _similarity(self, query_words: Counter[str], query_idf: dict[str, float], block: Block) -> float:
-        words = self._block_tokens[block.block_id]
+    def _similarity(self, query_words: Counter[str], query_idf: dict[str, float], words: tuple[str, ...]) -> float:
         if not words:
             return 0.0
         unique_doc = set(words)
@@ -96,8 +103,9 @@ class SlidingQueueSearch(SearchAlgorithm):
     def search(self, speech_text: str) -> AlgorithmResult:
         # 수동 입력/확정 발화는 중간 가설을 덮어쓰고 한 번만 큐에 넣는다.
         self._live_words = ()
-        self._queue.extend(tokenize(speech_text))
-        return self._evaluate()
+        words = tokenize(speech_text)
+        self._queue.extend(words)
+        return self._evaluate(words)
 
     def stream_update(self, speech_text: str, is_final: bool) -> AlgorithmResult:
         """매 STT 갱신에 큐를 재계산한다. 미확정 단어는 누적하지 않고 교체한다.
@@ -112,25 +120,49 @@ class SlidingQueueSearch(SearchAlgorithm):
             self._queue.extend(words)
         else:
             self._live_words = tuple(words)
-        return self._evaluate()
+        return self._evaluate(words)
 
-    def _evaluate(self) -> AlgorithmResult:
+    def _evaluate(self, latest_words: Sequence[str]) -> AlgorithmResult:
         current_words = self.buffer_words
         if not current_words:
             return AlgorithmResult(status='NONE')
 
-        query_words = Counter(current_words)
+        query_words = Counter(lexical_terms(' '.join(current_words)))
+        latest_terms = lexical_terms(' '.join(latest_words[-self.settings.sliding_window_words:]))
+        if not latest_terms:
+            return AlgorithmResult(status='NONE')
         query_idf = {word: self._term_idf(word) for word in query_words}
+        fresh_query = Counter(latest_terms)
+        fresh_idf = {word: self._term_idf(word) for word in fresh_query}
         radius = self.settings.local_radius_pages
         candidates: list[tuple[float, Block]] = []
         current_page_candidates: list[tuple[float, Block]] = []
+
+        def similarity(words: tuple[str, ...]) -> float:
+            # Give the current utterance priority while retaining the bounded
+            # history for context. Otherwise a short topic change can never
+            # outweigh the previous, longer sentence in the same 15-word queue.
+            history = self._similarity(query_words, query_idf, words)
+            fresh = self._similarity(fresh_query, fresh_idf, words)
+            return (history + 2 * fresh) / 3
+
+        page_scores = {page: similarity(words)
+                       for page, words in self._page_tokens.items()
+                       if abs(page - self.current_page) <= radius}
         for block in self.blocks:
             if abs(block.page - self.current_page) > radius:
                 continue
-            raw = self._similarity(query_words, query_idf, block)
+            # History can disambiguate a new utterance, but cannot supply all
+            # evidence for unrelated speech or an empty/filler hypothesis.
+            if not any(matches(term, word) for term in latest_terms
+                       for word in self._block_tokens[block.block_id]):
+                continue
+            raw = similarity(self._block_tokens[block.block_id])
             if raw == 0:
                 continue
-            weighted = self._candidate_score(raw, block.page)
+            # Speech can span a heading, explanation and figure on the same slide.
+            # Page context helps these beat a coincidental single-block overlap.
+            weighted = self._candidate_score(0.25 * raw + 0.75 * page_scores[block.page], block.page)
             candidates.append((weighted, block))
             if block.page == self.current_page:
                 current_page_candidates.append((weighted, block))

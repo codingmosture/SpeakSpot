@@ -88,7 +88,7 @@ def test_websocket_stt_generates_highlight(monkeypatch):
             ready = ws.receive_json()
             assert ready["type"] == "session.ready"
             assert ready["payload"]["session_id"] == session_id
-            ws.send_bytes(b"\\x01\\x00" * 16000)
+            ws.send_bytes(bytes([1, 0]) * 16000)
             speech = ws.receive_json()
             assert speech["type"] == "stt.result"
             assert speech["payload"]["is_final"]

@@ -302,7 +302,7 @@ function App() {
           if (generation !== liveGeneration.current ||
               sessionRef.current?.session_id !== current.session_id) continue
           setLiveWords(result.buffer_words)
-          setPreviewResult(result.status === 'MATCH' ? result : null)
+          setPreviewResult(!update.isFinal && result.status === 'MATCH' ? result : null)
           if (result.status === 'MATCH' && result.block_id && result.page != null) {
             setHighlight({ blockId: result.block_id, entryId: `live_${update.utteranceId}` })
             if (autoFollowRef.current) setPageNumber(result.page)

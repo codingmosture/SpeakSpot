@@ -69,7 +69,7 @@ export const httpApi: SpeakSpotApi = {
   },
 
   createSession: (body) =>
-    request(`${V1}/sessions`, { method: 'POST', body: JSON.stringify(body) }),
+    request(`${V1}/sessions`, { method: 'POST', body: JSON.stringify(body) }, 300_000),
 
   search: (body) => request(`${V1}/search`, { method: 'POST', body: JSON.stringify(body) }),
 

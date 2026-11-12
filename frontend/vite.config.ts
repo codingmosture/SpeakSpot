@@ -8,6 +8,8 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
+        // 실시간 STT WebSocket (/api/v1/sessions/{id}/stream)
+        ws: true,
       },
     },
   },

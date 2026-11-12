@@ -74,7 +74,7 @@ class SessionConfig(BaseModel):
     local_radius_pages: int = Field(default=5, ge=0, le=100)
     stt_buffer_seconds: float = Field(default=5.0, gt=0)
     stt_update_interval_seconds: float = Field(default=2.0, gt=0)
-    sliding_window_words: int = Field(default=40, ge=1, le=500)
+    sliding_window_words: int = Field(default=15, ge=1, le=500)
     min_match_score: float = Field(default=0.34, ge=0, le=1)
     backward_penalty: float = Field(default=0.08, ge=0, le=1)
     stay_bonus: float = Field(default=0.025, ge=0, le=1)

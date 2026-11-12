@@ -5,6 +5,7 @@ from typing import Literal
 import pymupdf as fitz
 from kiwipiepy import Kiwi
 from app.schemas.models import Block, BBox
+from app.documents.ocr import OCRConfig, extract_page_text
 
 # ---------------------------------------------------------------------------
 # 전역
@@ -23,6 +24,9 @@ BlockType = Literal[
 BROKEN_MATH_CHARS_RE = re.compile(r"[\uf000-\uf8ff\u239b-\u23b3]")
 
 class PDFParser:
+    def __init__(self, ocr_config: OCRConfig | None = None):
+        self.ocr_config = ocr_config if ocr_config is not None else OCRConfig.from_env()
+
     # -----------------------------------------------------------------------
     # 메인 파싱 함수: PDF 열기 -> 텍스트/좌표 추출 -> 블록 분류 -> 키워드 채우기
     # -----------------------------------------------------------------------
@@ -50,10 +54,17 @@ class PDFParser:
                     continue
 
                 # 텍스트 블록 추출
-                page_dict = page.get_text("dict")
+                page_dict = extract_page_text(page, self.ocr_config)
                 raw_text_blocks_initial = [
                     b for b in page_dict.get("blocks", []) if b.get("type") == 0
                 ]
+
+                # Text/OCR coordinates are unrotated; the viewer uses display orientation.
+                if page.rotation:
+                    for block in raw_text_blocks_initial:
+                        block["bbox"] = tuple(fitz.Rect(block["bbox"]) * page.rotation_matrix)
+                        for line in block.get("lines", []):
+                            line["bbox"] = tuple(fitz.Rect(line["bbox"]) * page.rotation_matrix)
 
                 # 표 영역 감지
                 table_bboxes = self._detect_tables_fast(
@@ -279,7 +290,7 @@ class PDFParser:
             r_data = d.get("rect")
             if r_data is None:
                 continue
-            r = fitz.Rect(r_data)
+            r = fitz.Rect(r_data) * page.rotation_matrix
             w = r.width / width
             h = r.height / height
 

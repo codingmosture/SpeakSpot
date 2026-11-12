@@ -39,7 +39,7 @@ class DocumentService:
             # 2. 동기 PDF 파싱은 별도 스레드에서 수행해 이벤트 루프를 막지 않는다.
             page_count, extracted_blocks = await asyncio.to_thread(self.parser.parse, file_path)
             if not extracted_blocks:
-                raise ValueError("PDF에 검색 가능한 텍스트가 없습니다. 텍스트 PDF를 업로드하세요.")
+                raise ValueError("PDF에서 검색 가능한 텍스트를 찾지 못했습니다. 이미지 문서는 OCR 설정과 이미지 해상도를 확인하세요.")
         except Exception:
             if os.path.exists(file_path):
                 os.remove(file_path)

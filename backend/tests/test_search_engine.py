@@ -110,3 +110,17 @@ def test_model_requirements_and_invalid_combinations():
         engine.create_session('not-yet', 'doc', algorithm='sliding_queue', model='bge-m3')
     with pytest.raises(ValueError):
         engine.create_session('not-yet', 'doc', algorithm='sliding_queue', model='invalid')
+
+
+def test_default_sliding_queue_keeps_only_latest_15_words():
+    from app.schemas.models import SessionConfig
+    assert SessionConfig().sliding_window_words == 15
+    assert SearchSettings().sliding_window_words == 15
+
+    engine = SearchEngine()
+    engine.register_document('window15', [block(1, '최신 발화 검색')])
+    engine.create_session('window15_sess', 'window15')
+    engine.search('window15_sess', ' '.join(f'word{i}' for i in range(20)))
+    assert engine.get_buffer_words('window15_sess') == [
+        f'word{i}' for i in range(5, 20)
+    ]

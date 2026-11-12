@@ -71,10 +71,11 @@ def test_short_new_topic_overcomes_long_previous_utterance_in_live_queue():
     ])
     engine.live_search('s', '데이터베이스 관계형 모델의 기본 개념 구조 원리 특성 이해', 'u1', 1, True)
     result, words, page = engine.live_search('s', '인덱스 탐색', 'u2', 2, False)
-    assert result.page == page == 3
+    assert result.status == 'NONE' and page == 2
     assert '데이터베이스' in words and words[-2:] == ['인덱스', '탐색']
     # Revisions replace the hypothesis; the final is committed once.
     engine.live_search('s', '인덱스 탐색', 'u2', 3, True)
+    assert engine.get_current_page('s') == 3
     engine.live_search('s', '인덱스 탐색', 'u2', 4, True)
     assert engine.get_buffer_words('s').count('인덱스') == 1
 
@@ -164,10 +165,10 @@ def test_clear_distant_figure_match_is_not_rejected_just_for_its_size():
 
 def test_preview_preserves_live_hypothesis_and_tracking_anchor():
     engine = engine_for([block(1, '안내'), block(2, '정규화 종속성'), block(3, '인덱스 탐색')])
-    engine.live_search('s', '정규화 종속성', 'u1', 1, False)
+    engine.live_search('s', '정규화', 'u1', 1, False)
     words = engine.get_buffer_words('s')
     engine.preview_search('s', '인덱스 탐색')
     assert engine.get_buffer_words('s') == words
     assert engine.get_current_page('s') == 2
     engine.live_search('s', '정규화 종속성', 'u1', 2, True)
-    assert engine.get_buffer_words('s') == words
+    assert engine.get_buffer_words('s') == ['정규화', '종속성']

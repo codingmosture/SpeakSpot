@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { SpeechResultTracker, type SpeechRecognitionEventLike } from '../lib/speechResults'
 
 /*
  * 브라우저 Web Speech API 기반 임시 STT.
@@ -7,17 +8,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  * Chrome / Edge 에서 동작한다.
  */
 
-interface SpeechRecognitionAlternativeLike {
-  transcript: string
-}
-interface SpeechRecognitionResultLike {
-  isFinal: boolean
-  0: SpeechRecognitionAlternativeLike
-}
-interface SpeechRecognitionEventLike {
-  resultIndex: number
-  results: ArrayLike<SpeechRecognitionResultLike>
-}
 interface SpeechRecognitionErrorEventLike {
   error: string
 }
@@ -66,13 +56,11 @@ export function useSpeechRecognition({ lang = 'ko-KR', onFinal, onInterim, onUpd
   const [error, setError] = useState<string | null>(null)
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
-  const lastFinalCaptionRef = useRef('')
+  const tracker = useRef(new SpeechResultTracker())
   const wantListeningRef = useRef(false)
   const onFinalRef = useRef(onFinal)
   const onInterimRef = useRef(onInterim)
   const onUpdateRef = useRef(onUpdate)
-  const utteranceIds = useRef(new Map<number, string>())
-  const utteranceSequence = useRef(0)
 
   useEffect(() => {
     onFinalRef.current = onFinal
@@ -94,37 +82,13 @@ export function useSpeechRecognition({ lang = 'ko-KR', onFinal, onInterim, onUpd
     recognition.interimResults = true
 
     recognition.onresult = (event) => {
-      // 확정 문장은 검색으로 한 번만 보낸다.
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i]
-        const transcript = result[0].transcript.trim()
-        if (!transcript || !result.isFinal) continue
-        const utteranceId = utteranceIds.current.get(i) ?? `browser_${++utteranceSequence.current}`
-        utteranceIds.current.delete(i)
-        lastFinalCaptionRef.current = transcript
-        if (onUpdateRef.current) onUpdateRef.current(transcript, true, utteranceId)
-        else onFinalRef.current(transcript)
+      const frame = tracker.current.read(event)
+      for (const update of frame.updates) {
+        if (onUpdateRef.current) onUpdateRef.current(update.text, update.isFinal, update.utteranceId)
+        else if (update.isFinal) onFinalRef.current(update.text)
       }
-
-      // resultIndex부터만 훑으면 이전에 온 중간 인식 문장이 사라지기 쉬우므로,
-      // 아직 확정되지 않은 모든 중간 인식 결과를 매 이벤트마다 갱신한다.
-      const partials: string[] = []
-      for (let i = 0; i < event.results.length; i++) {
-        const result = event.results[i]
-        if (!result.isFinal && result[0].transcript.trim()) {
-          const partial = result[0].transcript.trim()
-          partials.push(partial)
-          if (!utteranceIds.current.has(i)) {
-            utteranceIds.current.set(i, `browser_${++utteranceSequence.current}`)
-          }
-          onUpdateRef.current?.(partial, false, utteranceIds.current.get(i)!)
-        }
-      }
-      // 브라우저가 확정 결과를 내는 순간에도 마지막 자막을 바로 지우지 않는다.
-      const liveText = partials.join(' ')
-      setInterim(liveText || lastFinalCaptionRef.current)
-      // 자막 표시와 별개로 확정 전에도 페이지를 예측해 이동시킨다.
-      onInterimRef.current?.(liveText)
+      setInterim(frame.caption)
+      onInterimRef.current?.(frame.interim)
     }
 
     recognition.onerror = (event) => {
@@ -139,6 +103,7 @@ export function useSpeechRecognition({ lang = 'ko-KR', onFinal, onInterim, onUpd
     // 브라우저가 일정 시간 후 인식을 자동 종료하므로, 사용자가 끄지 않았다면 재시작
     recognition.onend = () => {
       if (wantListeningRef.current) {
+        tracker.current.resetCycle()
         try {
           recognition.start()
           return
@@ -150,16 +115,16 @@ export function useSpeechRecognition({ lang = 'ko-KR', onFinal, onInterim, onUpd
       wantListeningRef.current = false
       setListening(false)
       setInterim('')
-      lastFinalCaptionRef.current = ''
+      tracker.current.clearCaption()
       onInterimRef.current?.('')
-      utteranceIds.current.clear()
+      tracker.current.resetCycle()
     }
 
     recognitionRef.current = recognition
     wantListeningRef.current = true
     setError(null)
-    lastFinalCaptionRef.current = ''
-    utteranceIds.current.clear()
+    tracker.current.clearCaption()
+    tracker.current.resetCycle()
     setInterim('')
     onInterimRef.current?.('')
     try {

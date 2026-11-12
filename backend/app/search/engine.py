@@ -119,9 +119,21 @@ class SearchEngine:
                 raise ValueError('오래된 실시간 STT 이벤트입니다.')
             session.last_live_sequence = sequence
 
+            # A delayed interim for an already finalized utterance must not
+            # replay its old MATCH and send the viewer back to an earlier page.
+            if utterance_id in session.results_by_segment:
+                return SearchResult(
+                    status='NONE', document_id=session.document_id,
+                    session_id=session_id, segment_id=utterance_id,
+                    page=None, block_id=None, score=None,
+                    strategy=session.algorithm.name, stage_used='none',
+                    model=session.algorithm.model.name if session.algorithm.model else 'none',
+                    processing_ms=0,
+                ), list(getattr(session.algorithm, 'buffer_words', ())), session.algorithm.current_page
+
             started = perf_counter()
             if isinstance(session.algorithm, SlidingQueueSearch):
-                decision = session.algorithm.stream_update(text, is_final)
+                decision = session.algorithm.stream_update(text, is_final, utterance_id)
             else:
                 # 임베딩 모델 탐색은 누적 단어 큐가 없고, 입력 문장을 즉시 재탐색한다.
                 decision = session.algorithm.search(text)

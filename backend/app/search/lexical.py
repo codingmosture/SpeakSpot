@@ -44,7 +44,10 @@ _ALIAS_PATTERN = re.compile(r'(?<![가-힣a-z0-9_])(?:' + '|'.join(
 ) + r')(?![가-힣a-z0-9_])')
 _lock = Lock()
 _kiwi: Kiwi | None = None
-_HELPERS = frozenset({'하', '되', '있', '없', '보', '이', '것', '수', '등'})
+_HELPERS = frozenset({
+    '하', '되', '있', '없', '보', '이', '것', '수', '등',
+    '다음', '그다음', '이번', '그때', '이거', '그거', '거', '얘', '여기', '저기',
+})
 
 
 @lru_cache(maxsize=8192)

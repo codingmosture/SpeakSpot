@@ -33,8 +33,19 @@
 이어지면 해당 표현이 큐에서 빠지고 다시 탐색한다. 주변 슬라이드의 내용이
 비슷하거나 목차와 본문이 같은 용어를 사용하면 전환이 늦을 수 있다.
 
+화면 이동은 점수 계산과 별도로 확인한다. `그다음에`, `그래서`, `음` 같은 연결어는
+검색 근거에서 제외한다. 새 페이지 후보는 연속된 가설에서 내용이 추가되며 유지되거나,
+두 개 이상의 내용 단어를 포함한 발화가 확정된 경우에 이동한다. 같은 가설의 반복과
+서로 다른 발화 ID는 이동 확인으로 누적하지 않는다. 문서에서 유일하게 식별되고
+점수가 높은 단일 키워드는 즉시 이동할 수 있다. 따라서 자막·큐 갱신 주기는 유지하면서
+페이지 전환에 한 번의 추가 인식 갱신이 필요할 수 있다.
+
+브라우저 어댑터는 여러 미확정 결과를 한 가설로 합치고, 같은 결과와 확정 이벤트를
+중복 전송하지 않는다. 인식기가 재시작하면 결과 인덱스에 새 발화 ID를 부여한다.
+백엔드도 확정된 발화의 늦은 중간 결과를 무시해 이전 MATCH가 화면에 재적용되지 않게 한다.
+
 회귀 검사:
 
 ```powershell
-python -m pytest tests/test_sliding_queue_accuracy.py tests/test_search_engine.py tests/test_search_api.py -q
+python -m pytest tests/test_live_stability.py tests/test_sliding_queue_accuracy.py tests/test_search_engine.py tests/test_search_api.py -q
 ```

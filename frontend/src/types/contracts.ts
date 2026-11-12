@@ -58,8 +58,8 @@ export interface STTSegment {
 /* ---------- 2.4 SearchResult ---------- */
 
 export type SearchStatus = 'MATCH' | 'NONE'
-export type SearchStrategy = 'local' | 'global' | 'hybrid'
-export type StageUsed = 'local' | 'global' | 'none'
+export type SearchStrategy = 'sliding_queue' | 'local' | 'global' | 'hybrid' | 'hybrid1' | 'hybrid2'
+export type StageUsed = 'sliding_queue' | 'local' | 'global' | 'none'
 
 export interface SearchResult {
   status: SearchStatus
@@ -81,7 +81,7 @@ export interface SearchResult {
 
 export interface SessionConfig {
   stt_model: string
-  search_model: string
+  search_model: string | null
   search_strategy: SearchStrategy
   local_radius_pages: number
   stt_buffer_seconds: number

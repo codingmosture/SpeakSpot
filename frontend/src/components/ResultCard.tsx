@@ -1,6 +1,6 @@
 import type { TimelineEntry } from '../types/contracts'
 
-const STAGE_LABEL = { local: 'Local', global: 'Global', none: '-' } as const
+const STAGE_LABEL = { sliding_queue: 'Sliding Queue', local: 'Local', global: 'Global', none: '-' } as const
 
 export function ResultCard({ entry }: { entry: TimelineEntry | null }) {
   const r = entry?.result

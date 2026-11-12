@@ -1,27 +1,35 @@
-"""SpeakSpot 공통 계약. 기존 필드/Mock API와 호환되게 유지."""
+
 from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
+
+# PDF 좌표: [x0, y0, x1, y1]
 BBox = tuple[float, float, float, float]
 
 
+# 1. PDF 문서 정보
 class Document(BaseModel):
     document_id: str
     file_name: str
     page_count: int = Field(gt=0)
-    status: Literal['processing', 'ready', 'failed']
+    status: Literal["processing", "ready", "failed"]
 
 
+# 2. PDF 블록 정보
 class Block(BaseModel):
     block_id: str
     page: int = Field(ge=1)
     text: str
-    block_type: Literal['title', 'paragraph', 'bullet', 'table', 'caption', 'equation', 'other']
+    block_type: Literal[
+        "title", "paragraph", "bullet",
+        "table", "caption", "equation", "other"
+    ]
     bbox: BBox
     rects: list[BBox]
     keywords: list[str] = Field(default_factory=list)
 
 
+# 3. STT 음성 인식 결과
 class STTSegment(BaseModel):
     segment_id: str
     text: str
@@ -30,12 +38,13 @@ class STTSegment(BaseModel):
     is_final: bool
 
 
-SearchStrategyName = Literal['sliding_queue', 'local', 'global', 'hybrid1', 'hybrid2', 'hybrid']
-SearchStageName = Literal['sliding_queue', 'local', 'global', 'none']
+SearchStrategyName = Literal["sliding_queue", "local", "global", "hybrid1", "hybrid2", "hybrid"]
+SearchStageName = Literal["sliding_queue", "local", "global", "none"]
 
 
+# 4. 탐색 결과
 class SearchResult(BaseModel):
-    status: Literal['MATCH', 'NONE']
+    status: Literal["MATCH", "NONE"]
     document_id: str
     session_id: str
     segment_id: str | None
@@ -47,24 +56,26 @@ class SearchResult(BaseModel):
     model: str
     processing_ms: float = Field(ge=0)
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def validate_result(self):
-        if self.status == 'MATCH':
+        if self.status == "MATCH":
             if self.page is None or self.block_id is None:
-                raise ValueError('MATCH에는 페이지와 블록 ID가 필요합니다.')
+                raise ValueError("MATCH에는 페이지와 블록 ID가 필요합니다.")
             if self.page < 1:
-                raise ValueError('페이지는 1 이상이어야 합니다.')
-        if self.status == 'NONE':
+                raise ValueError("페이지는 1 이상이어야 합니다.")
+
+        if self.status == "NONE":
             if self.page is not None or self.block_id is not None:
-                raise ValueError('NONE은 위치 정보가 없어야 합니다.')
+                raise ValueError("NONE은 위치 정보가 없어야 합니다.")
+
         return self
 
 
+# 5. 모델 설정
 class SessionConfig(BaseModel):
-    # 기존 API 요청 필드를 유지하고 신규 검색 알고리즘 설정을 추가한다.
-    stt_model: str = 'not-configured'
+    stt_model: str = "not-configured"
     search_model: str | None = None
-    search_strategy: SearchStrategyName = 'sliding_queue'
+    search_strategy: SearchStrategyName = "sliding_queue"
     local_radius_pages: int = Field(default=5, ge=0, le=100)
     stt_buffer_seconds: float = Field(default=5.0, gt=0)
     stt_update_interval_seconds: float = Field(default=2.0, gt=0)

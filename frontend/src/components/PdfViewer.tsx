@@ -69,7 +69,7 @@ export function PdfViewer({
           <div className="viewer-empty" role="status">
             <span className="empty-document-icon" aria-hidden>▤</span>
             <h2>{emptyMessage ?? '문서에서 시작하세요'}</h2>
-            <p>위의 PDF 업로드로 문서를 열면<br />음성과 텍스트로 내용을 찾을 수 있습니다.</p>
+            <p>문서 영역의 PDF 업로드로 파일을 열면<br />음성과 텍스트로 내용을 찾을 수 있습니다.</p>
           </div>
         ) : pdf ? (
           <PdfPage pdf={pdf} pageNumber={pageNumber}>
@@ -99,17 +99,21 @@ function PdfPage({
 }) {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [width, setWidth] = useState(0)
-  // 마지막으로 렌더링이 끝난 페이지/너비 — 현재 값과 다르면 렌더링 중
+  const [{ width, height }, setSize] = useState({ width: 0, height: 0 })
+  // 페이지와 뷰어 크기 중 하나가 바뀌면 다시 렌더링한다.
   const [renderedKey, setRenderedKey] = useState('')
-  const rendering = width > 0 && renderedKey !== `${pageNumber}:${width}`
+  const renderKey = `${pageNumber}:${width}:${height}`
+  const rendering = width > 0 && height > 0 && renderedKey !== renderKey
 
-  // 컨테이너 너비 추적
+  // 패딩을 제외한 표시 공간의 너비와 높이를 함께 추적한다.
   useEffect(() => {
     const el = wrapperRef.current?.parentElement
     if (!el) return
     const observer = new ResizeObserver(([entry]) => {
-      setWidth(Math.floor(entry.contentRect.width))
+      setSize({
+        width: Math.floor(entry.contentRect.width),
+        height: Math.floor(entry.contentRect.height),
+      })
     })
     observer.observe(el)
     return () => observer.disconnect()
@@ -118,7 +122,7 @@ function PdfPage({
   // 페이지 렌더링
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas || width === 0) return
+    if (!canvas || width <= 0 || height <= 0) return
     if (pageNumber < 1 || pageNumber > pdf.numPages) return
 
     let cancelled = false
@@ -132,7 +136,8 @@ function PdfPage({
         // getViewport 는 페이지 회전(/Rotate)이 반영된 "표시 방향" 기준이므로
         // 정규화 좌표(contracts.md §2.2)를 그대로 겹칠 수 있다.
         const base = page.getViewport({ scale: 1 })
-        const cssScale = Math.min(width, 1100) / base.width
+        // 세로·가로·회전 페이지 모두 비율을 유지하며 한 페이지 전체를 표시한다.
+        const cssScale = Math.min(width / base.width, height / base.height)
         const dpr = window.devicePixelRatio || 1
         const viewport = page.getViewport({ scale: cssScale * dpr })
 
@@ -146,7 +151,7 @@ function PdfPage({
       } catch (err) {
         if ((err as Error)?.name !== 'RenderingCancelledException') console.error(err)
       } finally {
-        if (!cancelled) setRenderedKey(`${pageNumber}:${width}`)
+        if (!cancelled) setRenderedKey(renderKey)
       }
     })()
 
@@ -154,7 +159,7 @@ function PdfPage({
       cancelled = true
       renderTask?.cancel()
     }
-  }, [pdf, pageNumber, width])
+  }, [pdf, pageNumber, width, height, renderKey])
 
   return (
     <div ref={wrapperRef} className="page-sheet pdf">
@@ -182,7 +187,7 @@ function BlockOverlay({
 
   // 하이라이트된 영역이 화면에 보이도록 스크롤
   useEffect(() => {
-    highlightRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    highlightRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
   }, [highlight])
 
   // 실제 PDF: backend 가 준 rects(줄 단위 좌표)를 칠한다. 비어 있으면 bbox 로 대체.

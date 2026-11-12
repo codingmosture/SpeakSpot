@@ -58,10 +58,15 @@ input[type='checkbox'] {
 /* The document and its history share one workspace. */
 .app {
   max-width: 1680px;
-  padding: 0 32px 28px;
+  height: 100dvh;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 32px 20px;
   margin: 0 auto;
 }
 .app-header {
+  flex-shrink: 0;
   min-height: 84px;
   display: flex;
   align-items: center;
@@ -121,13 +126,18 @@ input[type='checkbox'] {
   background: #927440;
 }
 .layout {
+  flex: 1;
+  min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
   gap: 20px;
-  align-items: start;
+  align-items: stretch;
   margin-top: 20px;
 }
 .document-workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -135,11 +145,12 @@ input[type='checkbox'] {
   background: var(--surface);
 }
 .sidebar {
+  min-height: 0;
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
-  overflow: hidden;
+  overflow: auto;
 }
 .sidebar > section {
   padding: 20px;
@@ -161,6 +172,7 @@ input[type='checkbox'] {
   overflow-wrap: anywhere;
 }
 .notice.error {
+  flex-shrink: 0;
   margin-top: 12px;
   padding: 10px 14px;
   background: var(--danger-soft);
@@ -170,6 +182,7 @@ input[type='checkbox'] {
 
 /* Compact speech controls. Captions wrap without truncation. */
 .recording-toolbar {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -293,7 +306,7 @@ input:disabled, select:disabled {
   flex: 1;
 }
 
-/* Upload belongs to the document, alongside page navigation. */
+/* Document metadata lives in the right sidebar, clear of the page. */
 .document-panel {
   padding: 16px 18px;
 }
@@ -322,16 +335,19 @@ input:disabled, select:disabled {
   white-space: nowrap;
 }
 .viewer {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 .viewer-toolbar {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 8px 18px;
-  border-block: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   gap: 12px;
 }
 .viewer-label {
@@ -361,16 +377,15 @@ input:disabled, select:disabled {
   font-weight: 600;
 }
 .viewer-scroll {
-  min-height: 420px;
-  height: calc(100dvh - 332px);
-  max-height: 1100px;
-  overflow: auto;
-  padding: 24px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 20px;
   background: #eceef0;
   display: flex;
   justify-content: center;
-  align-items: flex-start;
-  scrollbar-gutter: stable;
+  align-items: center;
+  container-type: size;
 }
 .viewer-empty {
   margin: auto;
@@ -411,8 +426,7 @@ input:disabled, select:disabled {
 }
 .page-sheet.mock {
   container-type: inline-size;
-  width: 100%;
-  max-width: 900px;
+  width: min(100cqw, calc(100cqh / 1.414));
   aspect-ratio: 1 / 1.414;
 }
 .page-label {
@@ -749,12 +763,16 @@ input:disabled, select:disabled {
   }
 }
 @media (max-width: 800px) {
+  .app {
+    height: auto;
+    min-height: 100dvh;
+  }
   .layout {
+    flex: none;
     grid-template-columns: minmax(0, 1fr);
   }
-  .viewer-scroll {
-    height: 65dvh;
-    min-height: 360px;
+  .document-workspace {
+    height: max(320px, calc(100dvh - 200px));
   }
   .sidebar > section {
     padding: 20px;

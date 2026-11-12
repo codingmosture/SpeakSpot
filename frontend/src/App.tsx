@@ -483,13 +483,6 @@ function App() {
 
       <main className="layout">
         <div className="document-workspace">
-          <DocumentPanel
-            fileName={activeDoc?.file_name ?? null}
-            pageCount={activeDoc?.page_count ?? 0}
-            documentBusy={documentBusy}
-            sttActive={stt.listening || stt.busy}
-            onFileSelect={(file) => void handleFileSelect(file)}
-          />
           <PdfViewer
             pdf={pdf}
             pageCount={activeDoc?.page_count ?? 0}
@@ -503,6 +496,13 @@ function App() {
         </div>
 
         <aside className="sidebar" aria-label="문서 검색과 타임라인">
+          <DocumentPanel
+            fileName={activeDoc?.file_name ?? null}
+            pageCount={activeDoc?.page_count ?? 0}
+            documentBusy={documentBusy}
+            sttActive={stt.listening || stt.busy}
+            onFileSelect={(file) => void handleFileSelect(file)}
+          />
           <ControlPanel
             canSearch={session !== null}
             onSubmitText={(text) => void runSearch(text, 'manual')}

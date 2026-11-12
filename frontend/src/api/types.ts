@@ -4,6 +4,8 @@ import type {
   Document,
   SearchRequest,
   SearchResult,
+  LiveSearchRequest,
+  LiveSearchResult,
   Session,
   TimelineResponse,
 } from '../types/contracts'
@@ -22,6 +24,8 @@ export interface SpeakSpotApi {
   search(body: SearchRequest): Promise<SearchResult>
   /** STT 중간 인식 문장으로 임시 하이라이트만 계산한다. 큐는 확정 시에만 갱신. */
   previewSearch?(body: SearchRequest): Promise<SearchResult>
+  /** 중간 발화마다 실제 슬라이딩 큐/현재 페이지를 갱신한다. */
+  liveSearch?(body: LiveSearchRequest): Promise<LiveSearchResult>
   getTimeline(sessionId: string): Promise<TimelineResponse>
   /** 실시간 STT WebSocket 주소. Mock 모드에서는 null */
   streamUrl(sessionId: string): string | null

@@ -73,6 +73,9 @@ export const httpApi: SpeakSpotApi = {
 
   search: (body) => request(`${V1}/search`, { method: 'POST', body: JSON.stringify(body) }),
 
+  liveSearch: (body) =>
+    request(`${V1}/search/live`, { method: 'POST', body: JSON.stringify(body) }),
+
   previewSearch: (body) =>
     request(`${V1}/search/preview`, { method: 'POST', body: JSON.stringify(body) }),
 

@@ -55,9 +55,11 @@ interface Options {
   onFinal: (text: string) => void
   /** 매번 바뀌는 미확정 발화. 빈 문자열은 미확정 발화 종료. */
   onInterim?: (text: string) => void
+  /** 한 번의 STT 결과 변경을 순서대로 전달한다. */
+  onUpdate?: (text: string, isFinal: boolean, utteranceId: string) => void
 }
 
-export function useSpeechRecognition({ lang = 'ko-KR', onFinal, onInterim }: Options) {
+export function useSpeechRecognition({ lang = 'ko-KR', onFinal, onInterim, onUpdate }: Options) {
   const supported = getRecognitionCtor() !== null
   const [listening, setListening] = useState(false)
   const [interim, setInterim] = useState('')
@@ -68,11 +70,15 @@ export function useSpeechRecognition({ lang = 'ko-KR', onFinal, onInterim }: Opt
   const wantListeningRef = useRef(false)
   const onFinalRef = useRef(onFinal)
   const onInterimRef = useRef(onInterim)
+  const onUpdateRef = useRef(onUpdate)
+  const utteranceIds = useRef(new Map<number, string>())
+  const utteranceSequence = useRef(0)
 
   useEffect(() => {
     onFinalRef.current = onFinal
     onInterimRef.current = onInterim
-  }, [onFinal, onInterim])
+    onUpdateRef.current = onUpdate
+  }, [onFinal, onInterim, onUpdate])
 
   const start = useCallback(() => {
     const Ctor = getRecognitionCtor()
@@ -93,8 +99,11 @@ export function useSpeechRecognition({ lang = 'ko-KR', onFinal, onInterim }: Opt
         const result = event.results[i]
         const transcript = result[0].transcript.trim()
         if (!transcript || !result.isFinal) continue
+        const utteranceId = utteranceIds.current.get(i) ?? `browser_${++utteranceSequence.current}`
+        utteranceIds.current.delete(i)
         lastFinalCaptionRef.current = transcript
-        onFinalRef.current(transcript)
+        if (onUpdateRef.current) onUpdateRef.current(transcript, true, utteranceId)
+        else onFinalRef.current(transcript)
       }
 
       // resultIndex부터만 훑으면 이전에 온 중간 인식 문장이 사라지기 쉬우므로,
@@ -103,7 +112,12 @@ export function useSpeechRecognition({ lang = 'ko-KR', onFinal, onInterim }: Opt
       for (let i = 0; i < event.results.length; i++) {
         const result = event.results[i]
         if (!result.isFinal && result[0].transcript.trim()) {
-          partials.push(result[0].transcript.trim())
+          const partial = result[0].transcript.trim()
+          partials.push(partial)
+          if (!utteranceIds.current.has(i)) {
+            utteranceIds.current.set(i, `browser_${++utteranceSequence.current}`)
+          }
+          onUpdateRef.current?.(partial, false, utteranceIds.current.get(i)!)
         }
       }
       // 브라우저가 확정 결과를 내는 순간에도 마지막 자막을 바로 지우지 않는다.
@@ -138,12 +152,14 @@ export function useSpeechRecognition({ lang = 'ko-KR', onFinal, onInterim }: Opt
       setInterim('')
       lastFinalCaptionRef.current = ''
       onInterimRef.current?.('')
+      utteranceIds.current.clear()
     }
 
     recognitionRef.current = recognition
     wantListeningRef.current = true
     setError(null)
     lastFinalCaptionRef.current = ''
+    utteranceIds.current.clear()
     setInterim('')
     onInterimRef.current?.('')
     try {

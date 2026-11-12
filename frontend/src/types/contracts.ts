@@ -88,6 +88,15 @@ export interface SessionConfig {
   local_radius_pages: number
   stt_buffer_seconds: number
   stt_update_interval_seconds: number
+  min_match_score?: number
+  backward_penalty?: number
+  stay_bonus?: number
+  switch_margin?: number
+  prefix_bonus?: number
+  min_margin?: number
+  global_top_k_pages?: number
+  jev_min_confidence?: number
+  max_jev_candidates?: number
 }
 
 /* ---------- 3. HTTP API ---------- */
@@ -107,6 +116,20 @@ export interface SearchRequest {
   session_id: string
   text: string
   segment_id: string | null
+}
+
+export interface LiveSearchRequest {
+  session_id: string
+  utterance_id: string
+  text: string
+  sequence: number
+  is_final: boolean
+}
+
+export interface LiveSearchResult extends SearchResult {
+  buffer_words: string[]
+  current_page: number
+  sequence: number
 }
 
 export interface TimelineItem {

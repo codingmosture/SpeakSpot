@@ -764,3 +764,13 @@ input:disabled {
 .stats {
   grid-template-columns: repeat(2, 1fr);
 }
+
+/* 접을 수 있는 개발자 실험 설정 */
+.dev-details > summary { cursor: pointer; font-size: 14px; font-weight: 700; padding: 4px 0; }
+.dev-details[open] > summary { margin-bottom: 12px; }
+.dev-details .field { margin: 10px 0; }
+.dev-details input[type='number'] { width: 100%; padding: 8px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); }
+.dev-numeric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+.dev-details .btn { margin: 10px 0; width: 100%; }
+.dev-queue { background: var(--surface-2); padding: 10px; border-radius: 8px; font-size: 12px; overflow-wrap: anywhere; }
+.dev-queue p { margin-top: 6px; color: var(--text-muted); }

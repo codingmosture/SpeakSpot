@@ -17,6 +17,7 @@ stt/
   streaming.py       PCM 청크 처리
   cloud_stream.py    Google·CLOVA gRPC
   cloud_microphone.py  마이크와 gRPC 연결
+  cloud_socket.py    WebSocket과 gRPC 사이의 대기열·작업 스레드
   proto/             CLOVA 메시지 정의
   tools/             파일 전송·평가 도구
   examples/          학습 예제
@@ -51,6 +52,7 @@ stt/
 | `stt/live.py` | `PCMChunks`, `MicrophoneBuffer`, 마지막 음성 처리, 마이크 CLI. API에서도 공용 부품 재사용 |
 | `stt/streaming.py` | `StreamingSTT.feed(pcm)`로 청크 처리, `finish()`로 마지막 음성 처리. 네트워크와 독립적 |
 | `stt/cloud_stream.py` | `GoogleStreaming`, `ClovaStreaming`: 네이티브 gRPC 인증·송수신. Google 중간/확정 결과와 CLOVA 발화 결과를 공통 형식으로 변환 |
+| `stt/cloud_socket.py` | WebSocket PCM을 100ms 이하로 나눠 gRPC에 전달. 입력/결과 대기열 제한, 중간·확정 결과, 연결 종료 처리 |
 | `stt/cloud_microphone.py` | 100ms 마이크 PCM 전송과 클라우드 결과 수신을 동시에 수행. 자동 종료·수동 종료·마지막 응답 대기 |
 
 `providers.py`와 `cloud_stream.py`는 용도가 다릅니다. 전자는 파일/청크를 인식하는 어댑터, 후자는 연결을 유지하며 음성을 계속 주고받는 어댑터입니다.
@@ -79,6 +81,7 @@ stt/
 | `tests/test_live.py` | 음성 보존, 대기열 초과, 마지막 청크 처리 |
 | `tests/test_live_api.py` | 마이크 API 상태, 중복 시작, 결과 보관, 입력 검증 |
 | `tests/test_streaming.py` | 모델 캐시, 시각, WebSocket, 중단, 세션/Origin/schema 호환 |
+| `tests/test_cloud_socket.py` | 두 클라우드의 WebSocket 요청·중간/최종 결과·마지막 음성·오류·중단·시간 제한 검증 |
 | `tests/test_cloud_stream.py` | Google SDK 요청·중간/확정 ID, CLOVA 모의 gRPC, 클라우드 종료·오류 |
 | `tests/test_evaluation.py` | 한국어 문자 오류율 계산 |
 
@@ -98,5 +101,7 @@ stt/
                     ↓
               결과 보관 → GET /results
 
-프론트 PCM → stt_stream.py → StreamingSTT → STTService → STTSegment
+프론트 PCM → stt_stream.py
+  ├─ Whisper → StreamingSTT → STTService → STTSegment
+  └─ Google/CLOVA → CloudSocketBridge → cloud_stream → STTSegment
 ```

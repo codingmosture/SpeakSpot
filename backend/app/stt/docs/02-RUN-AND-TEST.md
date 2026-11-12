@@ -5,7 +5,7 @@
 ## 1 최초 설치
 
 ```powershell
-cd "C:\Users\goaal\Documents\박현민\임시공간\SpeakSpot-main\SpeakSpot-main"
+cd "C:\Users\goaal\Documents\박현민\임시공간\github desktop\SpeakSpot"
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r backend/app/stt/requirements/requirements-stt-dev.txt
 ```
@@ -16,7 +16,7 @@ Google/CLOVA를 사용할 때는 **이 터미널에서 05의 인증 설정을 �
 ## 2 서버 실행
 
 ```powershell
-cd "C:\Users\goaal\Documents\박현민\임시공간\SpeakSpot-main\SpeakSpot-main"
+cd "C:\Users\goaal\Documents\박현민\임시공간\github desktop\SpeakSpot"
 $env:HF_HOME = "$PWD\backend\app\stt\.models"
 cd backend
 ..\.venv\Scripts\python.exe -m uvicorn app.api.stt_app:app --host 127.0.0.1 --port 8000 --ws-max-size 32768 --ws-max-queue 32
@@ -149,3 +149,14 @@ Whisper는 tiny/base/small, Google은 default, CLOVA는 domain-default입니다.
 | 마이크 오류 | Windows 권한, 입력장치 id, 16kHz mono 지원 확인 |
 | UNAUTHENTICATED | [05 인증 오류 해결](05-CLOUD-STREAMING.md) 참고 |
 | 이전 결과만 보임 | GET Execute 재실행, 올바른 서버 포트/session_id 확인 |
+
+## 7 프론트 없이 클라우드 WebSocket 테스트
+
+05의 인증 설정 후 서버를 실행하고, 별도 터미널의 backend 폴더에서 준비한 16kHz mono PCM16 WAV를 전송합니다. URL은 따옴표로 감싸세요. 실제 클라우드 사용량이 발생합니다.
+
+```powershell
+..\.venv\Scripts\python.exe -m app.stt.tools.stream_client app/stt/samples/lecture.wav --url "ws://127.0.0.1:8000/api/stt/stream?provider=google&language=ko&duration_seconds=240"
+..\.venv\Scripts\python.exe -m app.stt.tools.stream_client app/stt/samples/lecture.wav --url "ws://127.0.0.1:8000/api/stt/stream?provider=clova&language=ko&duration_seconds=300"
+```
+
+설정한 시간보다 짧은 WAV를 사용합니다. `session.ready → stt.result → 정상 종료` 순서로 확인하세요. Google은 is_final=false 문장을 같은 segment_id의 true 문장으로 교체합니다. 위 도구는 브라우저 대신 PCM을 전송하므로 프론트 개발 전에도 백엔드 연결을 시험할 수 있습니다. 새 코드 적용 후 서버를 재시작하세요.

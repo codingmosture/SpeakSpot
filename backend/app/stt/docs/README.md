@@ -17,7 +17,7 @@
 ## 현재 작업 위치
 
 ```text
-C:\Users\goaal\Documents\박현민\임시공간\SpeakSpot-main\SpeakSpot-main
+C:\Users\goaal\Documents\박현민\임시공간\github desktop\SpeakSpot
 ```
 
 STT 소스는 `backend/app/api`, `backend/app/schemas`, `backend/app/stt`에 있습니다.
@@ -28,9 +28,9 @@ STT 단독 서버 진입점은 **`app.api.stt_app:app`**입니다. `app.main:app
 | 실행 경로 | 음성 입력 위치 | faster-whisper | Google·CLOVA |
 |---|---|---|---|
 | `/api/stt/live/*` — /docs 마이크 테스트 | 서버 PC 마이크 | 짧은 청크 반복 추론 | **실제 gRPC 스트리밍** |
-| `/api/stt/stream` — WebSocket | 클라이언트가 보낸 PCM | 지원 | **현재 미연결** |
+| `/api/stt/stream` — WebSocket | 클라이언트가 보낸 PCM | 지원 | **실제 gRPC 스트리밍** |
 | `/api/stt/transcribe` — 파일 업로드 | 업로드한 파일 | 지원 | REST 파일 인식 |
 | `python -m app.stt.live` — 터미널 | 실행 PC 마이크 | 지원 | 기존 REST 청크 호출 |
 | `evaluate_stt` — 평가 도구 | WAV 파일 | 지원 | 기존 REST 청크 호출 |
 
-**Google·CLOVA 실제 스트리밍 비교는 현재 `/docs`의 마이크 테스트에서 합니다.** 이 기능이 브라우저 사용자 마이크까지 자동으로 연결된 상태는 아닙니다. 프론트엔드 연결 범위는 03 문서를 참고하세요.
+**Google·CLOVA 실제 스트리밍은 `/docs` 마이크 테스트와 WebSocket PCM 입력 모두 지원합니다.** 브라우저 마이크 캡처·리샘플링 UI는 프론트 담당자가 연결해야 합니다. 프론트엔드 연결 범위는 03 문서를 참고하세요.

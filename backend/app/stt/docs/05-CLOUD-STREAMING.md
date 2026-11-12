@@ -73,7 +73,7 @@ Basic 도메인 권한과 외부 50051 포트 연결이 필요합니다.
 
 ## 5 REST 파일 인식과 인증 차이
 
-실제 gRPC는 `/live/start`에서 사용합니다. 기존 파일 업로드/마이크 CLI/평가 도구의 클라우드 경로는 REST 방식입니다.
+실제 gRPC는 `/live/start`와 `WS /api/stt/stream?provider=google` 또는 `provider=clova`에서 사용합니다. 기존 파일 업로드/마이크 CLI/평가 도구의 클라우드 경로는 REST 방식입니다.
 
 | 경로 | 필요한 인증 |
 |---|---|
@@ -83,7 +83,7 @@ Basic 도메인 권한과 외부 50051 포트 연결이 필요합니다.
 | CLOVA REST | CLOVA_SPEECH_SECRET + CLOVA_SPEECH_INVOKE_URL; REST를 지원하는 해당 도메인 |
 
 스트리밍 도메인 가입과 REST 도메인 사용 권한을 동일하다고 가정하지 않습니다.
-이번 비교 목적에는 02 문서의 `/live/start`를 사용하세요.
+서버 마이크 비교에는 02 문서의 `/live/start`, 클라이언트 음성 전송 비교에는 02의 WebSocket 도구를 사용하세요.
 
 공식 참고:
 [Google ADC](https://docs.cloud.google.com/speech-to-text/docs/v1/authentication),

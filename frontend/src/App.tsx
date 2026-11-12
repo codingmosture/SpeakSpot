@@ -55,6 +55,10 @@ function App() {
   const [configRevision, setConfigRevision] = useState(0)
   const [configBusy, setConfigBusy] = useState(false)
   const [liveWords, setLiveWords] = useState<string[]>([])
+  // 브라우저 STT 인식 결과를 검색 큐에 반영하는 간격 (음성 녹음 버퍼와 별개).
+  const [sttApplyMode, setSttApplyMode] = useState<'realtime' | '1s' | '2s' | 'sentence'>('realtime')
+  const liveUpdateTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingLiveUpdate = useRef<{ text: string; utteranceId: string } | null>(null)
   const configDirty = JSON.stringify(sessionConfig) !== JSON.stringify(appliedConfig)
 
   const [pageNumber, setPageNumber] = useState(1)
@@ -118,6 +122,9 @@ function App() {
   const resetTimeline = useCallback(() => {
     liveGeneration.current++
     liveQueue.current = []
+    if (liveUpdateTimer.current !== null) clearTimeout(liveUpdateTimer.current)
+    liveUpdateTimer.current = null
+    pendingLiveUpdate.current = null
     setLiveWords([])
     setEntries([])
     setHighlight(null)
@@ -328,22 +335,54 @@ function App() {
     }
   }, [addEntry, applyResult])
 
-  const handleLiveUpdate = useCallback((text: string, isFinal: boolean, utteranceId: string) => {
+  // 검색 큐 갱신 주기. '문장마다'를 제외하면 확정 전에도 갱신한다.
+  // 중간 결과는 최신 가설로 교체하고, 확정 이벤트는 반드시 전달한다.
+  const enqueueLive = useCallback((text: string, isFinal: boolean, utteranceId: string) => {
     if (!text.trim() || !sessionRef.current) return
-    const update = { text: text.trim(), isFinal, utteranceId, sequence: ++liveSeq.current }
-    if (!isFinal) {
-      // 브라우저가 같은 문장을 여러 번 수정할 때 오래된 중간 가설을 버린다.
-      liveQueue.current = liveQueue.current.filter(
-        (item) => item.isFinal || item.utteranceId !== utteranceId,
-      )
-    } else {
-      liveQueue.current = liveQueue.current.filter(
-        (item) => item.isFinal || item.utteranceId !== utteranceId,
-      )
-    }
-    liveQueue.current.push(update)
+    liveQueue.current = liveQueue.current.filter(
+      (item) => item.isFinal || item.utteranceId !== utteranceId,
+    )
+    liveQueue.current.push({
+      text: text.trim(), isFinal, utteranceId, sequence: ++liveSeq.current,
+    })
     void flushLive(liveGeneration.current)
   }, [flushLive])
+
+  const handleLiveUpdate = useCallback((text: string, isFinal: boolean, utteranceId: string) => {
+    if (isFinal) {
+      // 확정 직전의 타이머가 뒤늦게 실행되어 중복 반영하지 않도록 취소한다.
+      if (liveUpdateTimer.current !== null) clearTimeout(liveUpdateTimer.current)
+      liveUpdateTimer.current = null
+      pendingLiveUpdate.current = null
+      enqueueLive(text, true, utteranceId)
+      return
+    }
+    if (sttApplyMode === 'sentence') return
+    if (sttApplyMode === 'realtime') {
+      enqueueLive(text, false, utteranceId)
+      return
+    }
+    // 1초/2초 모드는 해당 시간마다 마지막으로 인식한 중간 문장만 전달한다.
+    pendingLiveUpdate.current = { text, utteranceId }
+    if (liveUpdateTimer.current !== null) return
+    liveUpdateTimer.current = setTimeout(() => {
+      liveUpdateTimer.current = null
+      const latest = pendingLiveUpdate.current
+      pendingLiveUpdate.current = null
+      if (latest) enqueueLive(latest.text, false, latest.utteranceId)
+    }, sttApplyMode === '1s' ? 1000 : 2000)
+  }, [enqueueLive, sttApplyMode])
+
+  useEffect(() => {
+    // 갱신 모드 변경 시 기존 주기의 예약 작업은 버린다.
+    if (liveUpdateTimer.current !== null) clearTimeout(liveUpdateTimer.current)
+    liveUpdateTimer.current = null
+    pendingLiveUpdate.current = null
+  }, [sttApplyMode])
+
+  useEffect(() => () => {
+    if (liveUpdateTimer.current !== null) clearTimeout(liveUpdateTimer.current)
+  }, [])
 
   // 브라우저 STT: 매 중간 가설이 실제 큐/현재 페이지를 갱신한다.
   const browserStt = useSpeechRecognition({
@@ -468,6 +507,8 @@ function App() {
             configBusy={configBusy}
             configDirty={configDirty}
             liveWords={liveWords}
+            sttApplyMode={sttApplyMode}
+            onSttApplyModeChange={setSttApplyMode}
           />
           <ResultCard entry={currentEntry} />
           <Timeline

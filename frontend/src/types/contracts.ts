@@ -83,6 +83,8 @@ export interface SessionConfig {
   stt_model: string
   search_model: string | null
   search_strategy: SearchStrategy
+  /** 최근 단어만 유지하는 슬라이딩 검색 큐의 길이 */
+  sliding_window_words?: number
   local_radius_pages: number
   stt_buffer_seconds: number
   stt_update_interval_seconds: number

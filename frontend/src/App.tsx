@@ -74,21 +74,6 @@ function App() {
 
   const blockMap = useMemo(() => new Map(blocks.map((b) => [b.block_id, b])), [blocks])
 
-  /* ---------- 뷰어 ---------- */
-  const [highlight, setHighlight] = useState<{ blockId: string; entryId: string } | null>(null)
-  const [showBlocks, setShowBlocks] = useState(false)
-  const [autoFollow, setAutoFollow] = useState(true)
-
-  const pageBlocks = useMemo(
-    () => blocks.filter((b) => b.page === pageNumber),
-    [blocks, pageNumber],
-  )
-  const committedHighlightBlock = highlight ? (blockMap.get(highlight.blockId) ?? null) : null
-  const livePreviewBlock = previewResult?.status === 'MATCH' && previewResult.block_id
-    ? (blockMap.get(previewResult.block_id) ?? null)
-    : null
-  const highlightBlock = livePreviewBlock ?? committedHighlightBlock
-
   /* ---------- 실시간 미확정 발화 하이라이트 ----------
    * STT의 중간 문장은 계속 수정된다. 실제 검색 큐에는 확정 문장만 한 번 추가하고,
    * 중간 문장은 /search/preview로 별도 조회하여 임시로 하이라이트한다.
@@ -107,6 +92,21 @@ function App() {
     }
     setPreviewResult(null)
   }, [])
+
+  /* ---------- 뷰어 ---------- */
+  const [highlight, setHighlight] = useState<{ blockId: string; entryId: string } | null>(null)
+  const [showBlocks, setShowBlocks] = useState(false)
+  const [autoFollow, setAutoFollow] = useState(true)
+
+  const pageBlocks = useMemo(
+    () => blocks.filter((b) => b.page === pageNumber),
+    [blocks, pageNumber],
+  )
+  const committedHighlightBlock = highlight ? (blockMap.get(highlight.blockId) ?? null) : null
+  const livePreviewBlock = previewResult?.status === 'MATCH' && previewResult.block_id
+    ? (blockMap.get(previewResult.block_id) ?? null)
+    : null
+  const highlightBlock = livePreviewBlock ?? committedHighlightBlock
 
   /* ---------- 타임라인 ---------- */
   const [entries, setEntries] = useState<TimelineEntry[]>([])

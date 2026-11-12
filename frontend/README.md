@@ -82,3 +82,18 @@ src/
 - `config.ts` 의 모델 이름은 contracts.md 예시값입니다. 실험으로 최종 STT·탐색 모델 조합이 정해지면 갱신하세요.
 - Mock 탐색은 테스트용 문자 bigram 매칭이며 실제 탐색 모델과 무관합니다.
 - OneDrive 폴더에서 빌드가 아무 메시지 없이 멈추면 `dist/` 를 지우고 다시 빌드하세요.
+
+# SpeakSpot 통합 실행
+
+기본 프론트엔드 모드는 **server**입니다. `mock`은 프론트만 시험할 때 명시적으로 선택합니다.
+
+1. 백엔드(`backend/`): `python -m pip install -r requirements-integrated.txt` 후 `python -m uvicorn app.main:app --reload`
+2. 프론트(`frontend/`): `pnpm install` 후 `pnpm dev`
+3. http://localhost:5173 에서 PDF를 업로드하면 자동으로 블록을 등록하고 검색 세션을 생성합니다.
+4. 텍스트 입력 → 검색, 마이크 → STT → 검색 → PDF 하이라이트를 확인할 수 있습니다.
+
+기본값은 검색 Hybrid1+BGE-M3, STT Faster-Whisper tiny입니다. BGE-M3 첫 다운로드와 임베딩, Whisper 첫 다운로드에는 시간이 걸릴 수 있으며 인터넷이 필요합니다. CPU 성능에 따라 처리시간이 길어질 수 있습니다. 클라우드 STT는 서버 측 인증이 별도로 필요합니다.
+
+프론트 단독 실행은 `VITE_API_MODE=mock` 설정을 사용합니다.
+
+개별 STT 테스트 서버 `app.api.stt_app:app`도 계속 유지됩니다. 실제 통합 API는 `app.main:app`에 연결되어 있습니다.

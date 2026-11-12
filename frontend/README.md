@@ -97,3 +97,9 @@ src/
 프론트 단독 실행은 `VITE_API_MODE=mock` 설정을 사용합니다.
 
 개별 STT 테스트 서버 `app.api.stt_app:app`도 계속 유지됩니다. 실제 통합 API는 `app.main:app`에 연결되어 있습니다.
+
+### 한국어 STT 테스트
+
+실시간 음성 인식 기본 입력은 브라우저 STT(Chrome/Edge, `ko-KR`)입니다. 로컬 STT가 한국어를 부정확하게 인식하거나 CPU 처리 지연으로 `BACKPRESSURE`를 낼 때, 프론트의 **개발 도구 → STT 소스 → 브라우저 STT**를 사용하면 음성 인식 결과를 HTTP 검색 API로 전달합니다. 브라우저 음성 인식은 브라우저/네트워크 지원 여부에 따라 사용할 수 없거나 정확도가 달라질 수 있습니다.
+
+로컬 Faster-Whisper를 비교하려면 개발 도구에서 **서버 STT**를 선택하세요. Whisper 모델은 `frontend/src/config.ts`의 `stt_model` 설정에서 선택하지만, `base`/`small`처럼 큰 모델은 CPU 환경에서 백프레셔를 더 쉽게 일으킬 수 있습니다.

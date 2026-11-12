@@ -37,6 +37,8 @@ interface Props {
   configBusy: boolean
   configDirty: boolean
   liveWords: string[]
+  sttApplyMode: 'realtime' | '1s' | '2s' | 'sentence'
+  onSttApplyModeChange: (mode: 'realtime' | '1s' | '2s' | 'sentence') => void
 }
 
 export function ControlPanel(props: Props) {
@@ -60,6 +62,8 @@ export function ControlPanel(props: Props) {
     configBusy,
     configDirty,
     liveWords,
+    sttApplyMode,
+    onSttApplyModeChange,
   } = props
 
   const [text, setText] = useState('')
@@ -204,6 +208,17 @@ export function ControlPanel(props: Props) {
               <option value="server" disabled={!serverSttAvailable}>서버 STT (Whisper)</option>
             </select>
           </label>
+          <label className="field">
+            STT → 검색 큐 반영 주기
+            <select value={sttApplyMode}
+              onChange={(e) => onSttApplyModeChange(e.target.value as typeof sttApplyMode)}>
+              <option value="realtime">0초 · 실시간 (기본)</option>
+              <option value="1s">1초마다</option>
+              <option value="2s">2초마다</option>
+              <option value="sentence">문장마다 (확정 시)</option>
+            </select>
+            <small className="hint">브라우저 STT가 인식 결과를 전달한 뒤 검색에 반영하는 주기입니다. 자막은 항상 즉시 표시됩니다. 서버 Whisper에는 적용되지 않습니다.</small>
+          </label>
           <label className="field">서버 STT 모델
             <select value={sessionConfig.stt_model} disabled={sttActive || configBusy}
               onChange={(e) => changeConfig('stt_model', e.target.value)}>
@@ -226,8 +241,8 @@ export function ControlPanel(props: Props) {
               ['global_top_k_pages', 'Global 후보 페이지 수', 1, 100, 1],
               ['jev_min_confidence', 'Jev 최소 신뢰도', 0, 1, 0.05],
               ['max_jev_candidates', 'Jev 최대 후보 블록', 1, 240, 1],
-              ['stt_buffer_seconds', 'STT 음성 버퍼 (초)', 1, 30, 0.5],
-              ['stt_update_interval_seconds', 'STT 갱신 간격 (초)', 0.2, 10, 0.2],
+              ['stt_buffer_seconds', '서버 Whisper 음성 버퍼 (초)', 1, 30, 0.5],
+              ['stt_update_interval_seconds', '서버 Whisper 갱신 간격 (초)', 0.2, 10, 0.2],
             ] as const).map(([key, label, min, max, step]) => (
               <label className="field" key={key}>
                 {label}

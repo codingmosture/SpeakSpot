@@ -141,3 +141,36 @@ def test_api_preview_is_provisional_only():
         '운영체제', '프로세스', '관리',
     ]
 
+
+
+def test_live_api_updates_actual_search_queue_on_interim():
+    doc_id = 'live_api_doc'
+    assert client.post('/api/v1/search/documents/register', json={
+        'document_id': doc_id, 'blocks': [{
+            'block_id': 'live-b1', 'page': 1, 'text': '운영체제 프로세스',
+            'block_type': 'paragraph', 'bbox': [0, 0, 1, 1], 'rects': [],
+        }],
+    }).status_code == 201
+    created = client.post('/api/v1/sessions', json={'document_id': doc_id,
+        'config': {'search_strategy': 'sliding_queue', 'sliding_window_words': 15}})
+    sid = created.json()['session_id']
+    for seq, text in enumerate(['운영체제', '운영체제 프로세스'], start=1):
+        result = client.post('/api/v1/search/live', json={
+            'session_id': sid, 'utterance_id': 'utt1',
+            'text': text, 'sequence': seq, 'is_final': False,
+        })
+        assert result.status_code == 200
+    result = result.json()
+    assert result['buffer_words'] == ['운영체제', '프로세스']
+    state = client.get(f'/api/v1/sessions/{sid}/search-state').json()
+    assert state['buffer_words'] == ['운영체제', '프로세스']
+    assert state['current_page'] == 1
+    assert client.get(f'/api/v1/sessions/{sid}/timeline').json()['items'] == []
+
+    final = client.post('/api/v1/search/live', json={
+        'session_id': sid, 'utterance_id': 'utt1',
+        'text': '운영체제 프로세스', 'sequence': 3, 'is_final': True,
+    })
+    assert final.status_code == 200
+    assert final.json()['buffer_words'] == ['운영체제', '프로세스']
+    assert len(client.get(f'/api/v1/sessions/{sid}/timeline').json()['items']) == 1

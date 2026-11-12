@@ -108,6 +108,30 @@ def search(request: SearchRequest):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+class LiveSearchRequest(BaseModel):
+    session_id: str = Field(min_length=1)
+    utterance_id: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    sequence: int = Field(ge=0)
+    is_final: bool = False
+
+
+@router.post('/search/live')
+def live_search(request: LiveSearchRequest):
+    """최신 중간/확정 STT 가설마다 검색 큐와 현재 페이지를 갱신한다."""
+    try:
+        result, words, current_page = engine.live_search(
+            request.session_id, request.text, request.utterance_id,
+            request.sequence, request.is_final,
+        )
+        return {**result.model_dump(), 'buffer_words': words,
+                'current_page': current_page, 'sequence': request.sequence}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.post('/search/preview', response_model=SearchResult)
 def preview_search(request: SearchRequest):
     """브라우저 STT의 임시 문장을 검색한다. 확정 전에는 큐와 타임라인을 변경하지 않는다."""

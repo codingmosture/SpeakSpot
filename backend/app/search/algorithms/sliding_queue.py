@@ -26,13 +26,16 @@ class SlidingQueueSearch(SearchAlgorithm):
             raise ValueError('sliding_queue는 AI 모델을 사용하지 않습니다. model=None으로 지정하세요.')
         super().__init__(blocks, settings, model)
         self._queue: deque[str] = deque(maxlen=settings.sliding_window_words)
+        # 브라우저 STT의 현재 미확정 단어는 매 갱신마다 교체한다.
+        self._live_words: tuple[str, ...] = ()
         self._block_tokens: dict[str, tuple[str, ...]] = {}
         self._idf: dict[str, float] = {}
         self._build_index()
 
     @property
     def buffer_words(self) -> tuple[str, ...]:
-        return tuple(self._queue)
+        # 실제 탐색에 사용 중인 '확정 + 미확정' 최근 N단어를 그대로 표시한다.
+        return tuple(deque((*self._queue, *self._live_words), maxlen=self._queue.maxlen))
 
     def _build_index(self) -> None:
         counts: Counter[str] = Counter()
@@ -47,6 +50,8 @@ class SlidingQueueSearch(SearchAlgorithm):
 
     def _term_idf(self, word: str) -> float:
         # 일치하는 문서 토큰의 최대 IDF를 사용한다.
+        if word in self._idf:
+            return self._idf[word]
         return max((weight for term, weight in self._idf.items() if matches(word, term)), default=1.0)
 
     def _similarity(self, query_words: Counter[str], query_idf: dict[str, float], block: Block) -> float:
@@ -89,11 +94,32 @@ class SlidingQueueSearch(SearchAlgorithm):
         return max(0.0, min(1.0, result))
 
     def search(self, speech_text: str) -> AlgorithmResult:
+        # 수동 입력/확정 발화는 중간 가설을 덮어쓰고 한 번만 큐에 넣는다.
+        self._live_words = ()
         self._queue.extend(tokenize(speech_text))
-        if not self._queue:
+        return self._evaluate()
+
+    def stream_update(self, speech_text: str, is_final: bool) -> AlgorithmResult:
+        """매 STT 갱신에 큐를 재계산한다. 미확정 단어는 누적하지 않고 교체한다.
+
+        '데이터' → '데이터베이스' → '데이터베이스 정규화'와 같은
+        중간 인식 수정은 과거 가설이 아닌 최신 가설만 사용한다.
+        미확정 상태에서도 current_page와 하이라이트 위치는 갱신한다.
+        """
+        words = tokenize(speech_text)
+        if is_final:
+            self._live_words = ()
+            self._queue.extend(words)
+        else:
+            self._live_words = tuple(words)
+        return self._evaluate()
+
+    def _evaluate(self) -> AlgorithmResult:
+        current_words = self.buffer_words
+        if not current_words:
             return AlgorithmResult(status='NONE')
 
-        query_words = Counter(self._queue)
+        query_words = Counter(current_words)
         query_idf = {word: self._term_idf(word) for word in query_words}
         radius = self.settings.local_radius_pages
         candidates: list[tuple[float, Block]] = []
@@ -154,4 +180,5 @@ class SlidingQueueSearch(SearchAlgorithm):
 
     def reset(self) -> None:
         self._queue.clear()
+        self._live_words = ()
         self.current_page = 1

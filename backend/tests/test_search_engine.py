@@ -147,3 +147,40 @@ def test_interim_preview_does_not_duplicate_words_or_commit_page():
     assert engine.get_buffer_words('session') == ['distinct', '중복', '제거']
     assert engine.get_current_page('session') == 2
 
+
+
+def test_live_word_updates_move_page_before_final_without_duplicating_queue():
+    engine = sample_engine(window=3)
+    first, words, page = engine.live_search('session', 'DISTINCT', 'u1', 1, False)
+    assert first.status == 'MATCH' and page == 2
+    assert words == ['distinct']  # 1단어만 듣고 바로 현재 페이지와 큐 갱신
+    second, words, page = engine.live_search('session', 'DISTINCT 중복', 'u1', 2, False)
+    assert words == ['distinct', '중복']  # 동일 단어를 다시 누적하지 않는다
+    corrected, words, page = engine.live_search('session', 'DISTINCT 중복 제거', 'u1', 3, False)
+    assert page == 2 and words == ['distinct', '중복', '제거']
+    assert engine.get_timeline('session') == []
+
+    final, words, page = engine.live_search('session', 'DISTINCT 중복 제거', 'u1', 4, True)
+    assert final.status == 'MATCH' and words == ['distinct', '중복', '제거']
+    assert len(engine.get_timeline('session')) == 1
+    assert engine.get_buffer_words('session') == ['distinct', '중복', '제거']
+    # 같은 발화가 확정 이후 다시 오더라도 중복으로 넣지 않는다.
+    again, words, page = engine.live_search('session', 'DISTINCT 중복 제거', 'u1', 5, True)
+    assert again == final and words == ['distinct', '중복', '제거']
+
+    # 다음 발화도 중간 인식 단계에서 과거 단어가 밀려난다.
+    next_result, words, page = engine.live_search('session', '정규화 종속성', 'u2', 6, False)
+    assert words == ['제거', '정규화', '종속성']
+    assert engine.get_buffer_words('session') == words
+    with pytest.raises(ValueError, match='오래된'):
+        engine.live_search('session', '오래된', 'u2', 3, False)
+
+
+def test_live_revises_current_hypothesis_instead_of_accumulating_old_words():
+    engine = sample_engine(window=3)
+    engine.live_search('session', '정규화 종속성', 'u1', 1, False)
+    assert engine.get_buffer_words('session') == ['정규화', '종속성']
+    engine.live_search('session', '정규화 함수', 'u1', 2, False)
+    assert engine.get_buffer_words('session') == ['정규화', '함수']
+    engine.live_search('session', '정규화 함수', 'u1', 3, True)
+    assert engine.get_buffer_words('session') == ['정규화', '함수']

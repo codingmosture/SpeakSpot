@@ -38,6 +38,10 @@ class STTSegment(BaseModel):
     is_final: bool
 
 
+SearchStrategyName = Literal["sliding_queue", "local", "global", "hybrid1", "hybrid2", "hybrid"]
+SearchStageName = Literal["sliding_queue", "local", "global", "none"]
+
+
 # 4. 탐색 결과
 class SearchResult(BaseModel):
     status: Literal["MATCH", "NONE"]
@@ -47,8 +51,8 @@ class SearchResult(BaseModel):
     page: int | None
     block_id: str | None
     score: float | None
-    strategy: Literal["local", "global", "hybrid"]
-    stage_used: Literal["local", "global", "none"]
+    strategy: SearchStrategyName
+    stage_used: SearchStageName
     model: str
     processing_ms: float = Field(ge=0)
 
@@ -69,9 +73,19 @@ class SearchResult(BaseModel):
 
 # 5. 모델 설정
 class SessionConfig(BaseModel):
-    stt_model: str
-    search_model: str
-    search_strategy: Literal["local", "global", "hybrid"]
-    local_radius_pages: int = Field(ge=0)
-    stt_buffer_seconds: float = Field(gt=0)
-    stt_update_interval_seconds: float = Field(gt=0)
+    stt_model: str = "not-configured"
+    search_model: str | None = None
+    search_strategy: SearchStrategyName = "sliding_queue"
+    local_radius_pages: int = Field(default=5, ge=0, le=100)
+    stt_buffer_seconds: float = Field(default=5.0, gt=0)
+    stt_update_interval_seconds: float = Field(default=2.0, gt=0)
+    sliding_window_words: int = Field(default=40, ge=1, le=500)
+    min_match_score: float = Field(default=0.34, ge=0, le=1)
+    backward_penalty: float = Field(default=0.08, ge=0, le=1)
+    stay_bonus: float = Field(default=0.025, ge=0, le=1)
+    switch_margin: float = Field(default=0.05, ge=0, le=1)
+    prefix_bonus: float = Field(default=0.035, ge=0, le=1)
+    min_margin: float = Field(default=0.0, ge=0, le=1)
+    global_top_k_pages: int = Field(default=3, ge=1, le=100)
+    jev_min_confidence: float = Field(default=0.0, ge=0, le=1)
+    max_jev_candidates: int = Field(default=120, ge=1, le=240)

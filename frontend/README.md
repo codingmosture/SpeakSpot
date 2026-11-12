@@ -92,7 +92,7 @@ src/
 3. http://localhost:5173 에서 PDF를 업로드하면 자동으로 블록을 등록하고 검색 세션을 생성합니다.
 4. 텍스트 입력 → 검색, 마이크 → STT → 검색 → PDF 하이라이트를 확인할 수 있습니다.
 
-기본값은 검색 Hybrid1+E5-small, STT Faster-Whisper tiny입니다. E5-small 첫 다운로드와 임베딩, Whisper 첫 다운로드에는 시간이 걸릴 수 있으며 인터넷이 필요합니다. CPU 성능에 따라 처리시간이 길어질 수 있습니다. 클라우드 STT는 서버 측 인증이 별도로 필요합니다.
+기본값은 검색 Sliding Queue(모델 없음, ±5페이지), STT Faster-Whisper tiny입니다. Whisper 첫 다운로드에는 시간이 걸릴 수 있으며 인터넷이 필요합니다. CPU 성능에 따라 처리시간이 길어질 수 있습니다. 클라우드 STT는 서버 측 인증이 별도로 필요합니다.
 
 프론트 단독 실행은 `VITE_API_MODE=mock` 설정을 사용합니다.
 

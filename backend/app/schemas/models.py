@@ -29,13 +29,8 @@ class Block(BaseModel):
     keywords: list[str] = Field(default_factory=list)
 
 
-# 3. STT 음성 인식 결과
-class STTSegment(BaseModel):
-    segment_id: str
-    text: str
-    start_ms: int = Field(ge=0)
-    end_ms: int = Field(ge=0)
-    is_final: bool
+# 3. STT 음성 인식 결과 (STT 모듈의 실제 모델과 동일한 클래스)
+from app.schemas.stt_models import STTSegment
 
 
 SearchStrategyName = Literal["sliding_queue", "local", "global", "hybrid1", "hybrid2", "hybrid"]
@@ -89,3 +84,9 @@ class SessionConfig(BaseModel):
     global_top_k_pages: int = Field(default=3, ge=1, le=100)
     jev_min_confidence: float = Field(default=0.0, ge=0, le=1)
     max_jev_candidates: int = Field(default=120, ge=1, le=240)
+
+
+# 6. 블록 조회 API 응답용
+class DocumentBlocksResponse(BaseModel):
+    document_id: str
+    blocks: list[Block]

@@ -15,6 +15,7 @@ from app.search.models.base import ModelRequestError, ModelUnavailableError
 
 router = APIRouter(prefix='/api/v1', tags=['Search'])
 engine = SearchEngine()
+session_configs: dict[str, SessionConfig] = {}
 
 
 class RegisterDocumentRequest(BaseModel):
@@ -89,6 +90,7 @@ def create_session(request: CreateSessionRequest):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    session_configs[session_id] = config
     return {'session_id': session_id, 'document_id': request.document_id, 'status': 'created'}
 
 
@@ -125,3 +127,11 @@ def reset_search(session_id: str):
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {'session_id': session_id, 'current_page': 1, 'status': 'reset'}
+
+
+@router.get('/sessions/{session_id}/timeline')
+def get_timeline(session_id: str):
+    try:
+        return {'session_id': session_id, 'items': engine.get_timeline(session_id)}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -1,0 +1,4 @@
+# SpeakSpot 전체 서비스: 기본 API + PDF + 검색 모델 + STT
+-r requirements.txt
+-r requirements-search.txt
+-r app/stt/requirements/requirements-stt-web.txt

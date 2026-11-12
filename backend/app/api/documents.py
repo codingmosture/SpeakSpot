@@ -1,7 +1,8 @@
-from fastapi import APIRouter, UploadFile, File, Query, status
+from fastapi import APIRouter, UploadFile, File, Query, status, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from app.schemas.models import Document, DocumentBlocksResponse
 from app.documents.service import document_service
+from app.api.search import engine
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
@@ -23,9 +24,15 @@ async def upload_document(file: UploadFile = File(...)):
     
     try:
         doc_info = await document_service.process_upload(file)
+        # 문서 등록: PDF 업로드 직후 동일한 document_id로 검색 세션 생성 가능.
+        engine.register_document(doc_info.document_id, document_service.blocks[doc_info.document_id])
         return doc_info
-    except Exception as e:
-        return error_response(500, "INTERNAL_SERVER_ERROR", f"PDF 처리 중 오류가 발생했습니다: {str(e)}")
+    except HTTPException as exc:
+        return error_response(exc.status_code, "FILE_TOO_LARGE", str(exc.detail))
+    except ValueError as exc:
+        return error_response(400, "INVALID_DOCUMENT", str(exc))
+    except Exception:
+        return error_response(500, "INTERNAL_SERVER_ERROR", "PDF 처리 중 오류가 발생했습니다.")
 
 
 # 3.2 블록 조회 (GET /api/v1/documents/{document_id}/blocks)

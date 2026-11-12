@@ -15,6 +15,8 @@ class SearchSession:
     document_id: str
     algorithm: SearchAlgorithm
     results_by_segment: dict[str, SearchResult] = field(default_factory=dict)
+    timeline: list[dict] = field(default_factory=list)
+    started_at: float = field(default_factory=perf_counter)
     lock: RLock = field(default_factory=RLock)
 
 
@@ -62,7 +64,8 @@ class SearchEngine:
                 loaded_model.prepare(document_id, self._documents[document_id])
             self._sessions[session_id] = SearchSession(document_id, selected)
 
-    def search(self, session_id: str, text: str, segment_id: str | None = None) -> SearchResult:
+    def search(self, session_id: str, text: str, segment_id: str | None = None,
+               time_ms: int | None = None) -> SearchResult:
         if not text.strip():
             raise ValueError('발화 text는 비어 있을 수 없습니다.')
         session = self._get_session(session_id)
@@ -87,6 +90,11 @@ class SearchEngine:
             )
             if segment_id is not None:
                 session.results_by_segment[segment_id] = result
+            session.timeline.append({
+                'segment_id': segment_id,
+                'time_ms': time_ms if time_ms is not None else int((perf_counter() - session.started_at) * 1000),
+                'status': result.status, 'page': result.page, 'block_id': result.block_id,
+            })
             return result
 
     def reset_session(self, session_id: str) -> None:
@@ -94,6 +102,13 @@ class SearchEngine:
         with session.lock:
             session.algorithm.reset()
             session.results_by_segment.clear()
+            session.timeline.clear()
+            session.started_at = perf_counter()
+
+    def get_timeline(self, session_id: str) -> list[dict]:
+        session = self._get_session(session_id)
+        with session.lock:
+            return [dict(item) for item in session.timeline]
 
     def get_current_page(self, session_id: str) -> int:
         session = self._get_session(session_id)

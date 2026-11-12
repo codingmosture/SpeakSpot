@@ -41,7 +41,7 @@ class SearchSocket:
         if segment["is_final"] and segment["text"].strip():
             result = await asyncio.to_thread(
                 engine.search, self.session_id, segment["text"],
-                segment["segment_id"], segment["end_ms"],
+                segment["segment_id"],
             )
             await self.websocket.send_json({
                 "type": "highlight.update", "payload": result.model_dump(),

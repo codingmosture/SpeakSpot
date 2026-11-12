@@ -115,3 +115,59 @@ def test_word_window_and_local_radius_still_bound_all_evidence():
     assert engine.search('s', '원격 강의').status == 'NONE'
     assert engine.get_current_page('s') == 1
     assert engine.get_buffer_words('s') == ['원격', '강의']
+
+
+def test_overview_and_references_do_not_chase_the_detailed_topic():
+    engine = engine_for([
+        block(1, '목차 강의 안내'),
+        block(2, 'SQL 정의 조작 제어 CREATE TABLE ALTER TABLE DROP TABLE 삽입 SQL 객체 권한 역할'),
+        block(3, 'SQL 소개 발전 역사 프로그래밍 언어 삽입 SQL'),
+        block(4, 'SQL 분류 정의어 조작어 제어어'),
+        block(5, '테이블 생성 변경 삭제 데이터 조작 접근 권한'),
+    ])
+    engine.live_search('s', '크리에이트 테이블 얼터 테이블 드랍 테이블 객체 권한 역할', 'overview', 1, True)
+    assert engine.get_current_page('s') == 2
+    engine.live_search('s', '추가로 삽입 SQL 프로그래밍을 후반부에 소개합니다', 'reference', 2, False)
+    assert engine.get_current_page('s') == 2
+    engine.live_search('s', '추가로 삽입 SQL 프로그래밍을 후반부에 소개합니다', 'reference', 3, True)
+    assert engine.get_current_page('s') == 2
+    engine.live_search('s', 'SQL 소개와 발전 역사를 살펴봅니다', 'next', 4, True)
+    assert engine.get_current_page('s') == 3
+    engine.live_search('s', '정의어 조작어 제어어 세 종류로 분류합니다', 'classification', 5, True)
+    assert engine.get_current_page('s') == 4
+
+
+def test_shared_schema_terms_do_not_move_to_the_later_explanation():
+    engine = engine_for([
+        block(1, '테이블 생성 CREATE TABLE 속성 이름 데이터 타입 NOT NULL DEFAULT PRIMARY KEY FOREIGN KEY'),
+        block(2, '테이블 속성 정의 기본키 외래키'),
+        block(3, '속성이 널 값을 허용하는지 여부와 기본 값을 표현 DEFAULT NOT NULL'),
+        block(5, '기본키의 정의 PRIMARY KEY'),
+    ])
+    for sequence, text in enumerate([
+        '테이블 이름과 속성 이름 데이터 타입을 나열합니다',
+        '속성이 null인지 null 값 여부를 표현하고 default 값을 설정합니다',
+        'primary key를 설정하고 복합키는 여러 속성 리스트로 표현합니다',
+        '유니크는 대체키 외래키는 포링키로 정의합니다',
+    ], 1):
+        engine.live_search('s', text, str(sequence), sequence, True)
+        assert engine.get_current_page('s') == 1
+
+
+def test_clear_distant_figure_match_is_not_rejected_just_for_its_size():
+    engine = engine_for([
+        block(1, '시작 안내'), block(2, '테이블 생성 변경'),
+        block(4, '고객 아이디 고객 이름 학생 적립금 ' + ' '.join(f'noise{i}' for i in range(120))),
+    ])
+    assert engine.search('s', '고객 아이디 고객 이름 학생 적립금을 보겠습니다').page == 4
+
+
+def test_preview_preserves_live_hypothesis_and_tracking_anchor():
+    engine = engine_for([block(1, '안내'), block(2, '정규화 종속성'), block(3, '인덱스 탐색')])
+    engine.live_search('s', '정규화 종속성', 'u1', 1, False)
+    words = engine.get_buffer_words('s')
+    engine.preview_search('s', '인덱스 탐색')
+    assert engine.get_buffer_words('s') == words
+    assert engine.get_current_page('s') == 2
+    engine.live_search('s', '정규화 종속성', 'u1', 2, True)
+    assert engine.get_buffer_words('s') == words

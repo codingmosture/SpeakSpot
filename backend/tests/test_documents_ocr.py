@@ -200,6 +200,38 @@ def test_real_image_text_and_coordinates(tmp_path, native, rotation):
         assert image_block.rects == [image_block.bbox]
 
 
+@pytest.mark.skipif(not REAL_OCR, reason="Run python scripts/setup_ocr.py for real OCR tests")
+@pytest.mark.parametrize('rotation', [0, 90])
+def test_colored_diagram_labels_are_read_and_kept_in_one_figure(tmp_path, rotation):
+    from app.documents.labels import label_crops
+
+    with fitz.open() as artwork:
+        page = artwork.new_page(width=600, height=240)
+        page.draw_rect(fitz.Rect(35, 35, 300, 85), fill=(0.1, 0.5, 0.7), color=None)
+        page.insert_text((50, 68), '권한 관리', fontsize=22, fontname='korea', color=(1, 1, 1))
+        page.draw_rect(fitz.Rect(35, 120, 300, 170), fill=(0.65, 0.85, 0.95), color=None)
+        page.insert_text((50, 155), 'CREATE ROLE', fontsize=24)
+        raster = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+        labels = list(label_crops(raster))
+        assert len(labels) == 2
+        for label, bounds in labels:
+            assert label.n == 3
+            assert 0 <= bounds.x0 < bounds.x1 <= raster.width
+            assert 0 <= bounds.y0 < bounds.y1 <= raster.height
+    path = tmp_path / 'diagram.pdf'
+    with fitz.open() as doc:
+        page = doc.new_page(width=600, height=700)
+        page.insert_image(fitz.Rect(50, 200, 550, 400), stream=raster.tobytes('png'))
+        page.set_rotation(rotation)
+        doc.save(path)
+    _, blocks = PDFParser(OCRConfig(tessdata=str(DEFAULT_TESSDATA))).parse(str(path))
+    assert len(blocks) == 1
+    assert '권한' in blocks[0].text and '관리' in blocks[0].text
+    assert 'CREATE' in blocks[0].text and 'ROLE' in blocks[0].text
+    assert_valid_blocks(blocks)
+    assert blocks[0].rects == [blocks[0].bbox]
+
+
 @pytest.mark.parametrize("image", [False, True])
 def test_only_image_bullets_stay_grouped(tmp_path, monkeypatch, image):
     import app.documents.parser as parser_module

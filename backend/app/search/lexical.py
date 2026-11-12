@@ -15,7 +15,7 @@ _SPOKEN_SQL = {
     '프라이머리 키': 'primary key', '포린 키': 'foreign key',
     '낫 널': 'not null',
     '에스 큐 엘': 'sql', '디디엘': 'ddl', '디엠엘': 'dml', '디씨엘': 'dcl',
-    '크리에이트': 'create', '얼터': 'alter', '드롭': 'drop',
+    '크리에이트': 'create', '얼터': 'alter', '드롭': 'drop', '드랍': 'drop',
     '셀렉트': 'select', '셀렉': 'select', '디스팅트': 'distinct',
     '인서트': 'insert', '인투': 'into', '밸류즈': 'values',
     '업데이트': 'update', '딜리트': 'delete', '테이블': 'table',
@@ -28,6 +28,12 @@ _SPOKEN_SQL = {
     '레프트': 'left', '라이트': 'right', '아우터': 'outer', '조인': 'join',
     '그랜트': 'grant', '리보크': 'revoke', '롤': 'role',
     '커서': 'cursor', '오픈': 'open',
+    '정의어': '정의', '조작어': '조작', '제어어': '제어',
+    '포링 키': 'foreign key', '포인 키': 'foreign key',
+    '기본키': 'primary key', '외래키': 'foreign key', '대체키': 'unique',
+    'data definition language': '데이터 정의',
+    'data manipulation language': '데이터 조작',
+    'data control language': '데이터 제어',
 }
 _ALIASES = {
     re.sub(r'\s+', '', word): replacement for word, replacement in _SPOKEN_SQL.items()

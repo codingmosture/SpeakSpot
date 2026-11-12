@@ -9,6 +9,7 @@
 """
 from collections import Counter, deque
 from math import log, sqrt
+import re
 from typing import Sequence
 
 from app.schemas.models import Block
@@ -16,6 +17,10 @@ from app.search.algorithms.base import AlgorithmResult, SearchAlgorithm
 from app.search.config import SearchSettings
 from app.search.lexical import lexical_terms
 from app.search.tokenizer import matches, tokenize
+
+
+_REFERENCE = re.compile(r'후반부|나중에|이따가|앞에서|앞서|지난\s*시간|다음\s*시간')
+_GENERIC_TRANSITIONS = frozenset({'값', '표현', '여부'})
 
 
 class SlidingQueueSearch(SearchAlgorithm):
@@ -30,8 +35,10 @@ class SlidingQueueSearch(SearchAlgorithm):
         self._queue: deque[str] = deque(maxlen=settings.sliding_window_words)
         # 브라우저 STT의 현재 미확정 단어는 매 갱신마다 교체한다.
         self._live_words: tuple[str, ...] = ()
+        self._stream_anchor: int | None = None
         self._block_tokens: dict[str, tuple[str, ...]] = {}
         self._page_tokens: dict[int, tuple[str, ...]] = {}
+        self._page_pairs: dict[int, set[tuple[str, str]]] = {}
         self._idf: dict[str, float] = {}
         self._build_index()
 
@@ -46,11 +53,13 @@ class SlidingQueueSearch(SearchAlgorithm):
         for block in self.blocks:
             if block.block_id in self._block_tokens:
                 raise ValueError(f'중복 block_id: {block.block_id}')
-            words = lexical_terms(block.text) + tuple(
+            text_words = lexical_terms(block.text)
+            words = text_words + tuple(
                 term for keyword in block.keywords for term in lexical_terms(keyword)
             )
             self._block_tokens[block.block_id] = words
             pages.setdefault(block.page, []).extend(words)
+            self._page_pairs.setdefault(block.page, set()).update(zip(text_words, text_words[1:]))
             counts.update(set(words))
         total = len(self.blocks)
         self._idf = {word: log((total + 1) / (count + 1)) + 1.0 for word, count in counts.items()}
@@ -91,8 +100,10 @@ class SlidingQueueSearch(SearchAlgorithm):
         prefix_ratio = prefix_hits / hit_count
         return min(1.0, base + self.settings.prefix_bonus * prefix_ratio)
 
-    def _candidate_score(self, similarity: float, page: int) -> float:
-        result = similarity
+    def _candidate_score(self, similarity: float, page: int, anchor: int) -> float:
+        # Adjacent slides are normal lecture progress; a more distant jump
+        # needs stronger evidence than a passing reference to a shared keyword.
+        result = similarity - min(0.24, max(0, abs(page - anchor) - 1) * 0.06)
         if page == self.current_page:
             result += self.settings.stay_bonus
         elif page < self.current_page:
@@ -103,6 +114,7 @@ class SlidingQueueSearch(SearchAlgorithm):
     def search(self, speech_text: str) -> AlgorithmResult:
         # 수동 입력/확정 발화는 중간 가설을 덮어쓰고 한 번만 큐에 넣는다.
         self._live_words = ()
+        self._stream_anchor = None
         words = tokenize(speech_text)
         self._queue.extend(words)
         return self._evaluate(words)
@@ -115,14 +127,23 @@ class SlidingQueueSearch(SearchAlgorithm):
         미확정 상태에서도 current_page와 하이라이트 위치는 갱신한다.
         """
         words = tokenize(speech_text)
+        if self._stream_anchor is None:
+            self._stream_anchor = self.current_page
+        anchor = self._stream_anchor
         if is_final:
             self._live_words = ()
             self._queue.extend(words)
         else:
             self._live_words = tuple(words)
-        return self._evaluate(words)
+        result = self._evaluate(words, anchor)
+        if result.page is not None and abs(result.page - anchor) == 1:
+            self._stream_anchor = result.page
+        if is_final:
+            self._stream_anchor = None
+        return result
 
-    def _evaluate(self, latest_words: Sequence[str]) -> AlgorithmResult:
+    def _evaluate(self, latest_words: Sequence[str], anchor: int | None = None) -> AlgorithmResult:
+        anchor = self.current_page if anchor is None else anchor
         current_words = self.buffer_words
         if not current_words:
             return AlgorithmResult(status='NONE')
@@ -136,7 +157,6 @@ class SlidingQueueSearch(SearchAlgorithm):
         fresh_idf = {word: self._term_idf(word) for word in fresh_query}
         radius = self.settings.local_radius_pages
         candidates: list[tuple[float, Block]] = []
-        current_page_candidates: list[tuple[float, Block]] = []
 
         def similarity(words: tuple[str, ...]) -> float:
             # Give the current utterance priority while retaining the bounded
@@ -148,9 +168,28 @@ class SlidingQueueSearch(SearchAlgorithm):
 
         page_scores = {page: similarity(words)
                        for page, words in self._page_tokens.items()
-                       if abs(page - self.current_page) <= radius}
+                       if abs(page - anchor) <= radius}
+        anchor_words = self._page_tokens.get(anchor, ())
+        novel = {term for term in latest_terms
+                 if term not in _GENERIC_TRANSITIONS
+                 and not any(matches(term, word) for word in anchor_words)}
+        query_pairs = set(zip(latest_terms, latest_terms[1:]))
+        reference = _REFERENCE.search(' '.join(latest_words[-self.settings.sliding_window_words:]))
+        eligible_pages = {anchor}
+        for page in page_scores:
+            if page == anchor or reference:
+                continue
+            page_words = self._page_tokens[page]
+            new_hits = {term for term in novel if any(matches(term, word) for word in page_words)}
+            new_pairs = (query_pairs & self._page_pairs[page]) - self._page_pairs.get(anchor, set())
+            focused = len(set(latest_terms)) == 1 and sum(
+                any(matches(latest_terms[0], word) for word in self._page_tokens[other])
+                for other in page_scores
+            ) == 1
+            if len(new_hits) >= 2 or (new_hits and new_pairs) or focused:
+                eligible_pages.add(page)
         for block in self.blocks:
-            if abs(block.page - self.current_page) > radius:
+            if block.page not in eligible_pages:
                 continue
             # History can disambiguate a new utterance, but cannot supply all
             # evidence for unrelated speech or an empty/filler hypothesis.
@@ -162,13 +201,22 @@ class SlidingQueueSearch(SearchAlgorithm):
                 continue
             # Speech can span a heading, explanation and figure on the same slide.
             # Page context helps these beat a coincidental single-block overlap.
-            weighted = self._candidate_score(0.25 * raw + 0.75 * page_scores[block.page], block.page)
+            weighted = self._candidate_score(0.25 * raw + 0.75 * page_scores[block.page], block.page, anchor)
             candidates.append((weighted, block))
-            if block.page == self.current_page:
-                current_page_candidates.append((weighted, block))
 
+        # A distinctive distant match may be weaker in a long OCR figure, but
+        # must still clearly beat every alternative page before moving there.
+        page_best: dict[int, float] = {}
+        for score, block in candidates:
+            page_best[block.page] = max(page_best.get(block.page, 0), score)
+        candidates = [(score, block) for score, block in candidates
+                      if abs(block.page - anchor) <= 1 or score >= 0.65
+                      or score >= max((value for page, value in page_best.items()
+                                      if page != block.page), default=0) + max(0.12, self.settings.switch_margin)]
         if not candidates:
             return AlgorithmResult(status='NONE')
+        current_page_candidates = [(score, block) for score, block in candidates
+                                   if block.page == self.current_page]
         # 안정적인 tie-break: 같으면 현재 페이지, 다음으로 가까운 페이지, 첫 블록
         candidates.sort(key=lambda pair: (
             -pair[0],
@@ -203,14 +251,19 @@ class SlidingQueueSearch(SearchAlgorithm):
         """
         committed_queue = self._queue
         committed_page = self.current_page
+        committed_live = self._live_words
+        committed_anchor = self._stream_anchor
         self._queue = deque(committed_queue, maxlen=committed_queue.maxlen)
         try:
             return self.search(speech_text)
         finally:
             self._queue = committed_queue
             self.current_page = committed_page
+            self._live_words = committed_live
+            self._stream_anchor = committed_anchor
 
     def reset(self) -> None:
         self._queue.clear()
         self._live_words = ()
+        self._stream_anchor = None
         self.current_page = 1

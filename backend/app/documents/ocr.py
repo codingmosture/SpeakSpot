@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pymupdf as fitz
+from app.documents.labels import label_crops
 
 
 DEFAULT_TESSDATA = Path(__file__).resolve().parents[2] / ".cache" / "tessdata"
@@ -120,25 +121,35 @@ def _recognize_images(page: fitz.Page, native: dict, regions: list[fitz.Rect],
         # OCR each image crop independently. Full-page layout detection misses cells
         # in slide screenshots and can take longer than the upload timeout.
         pixmap = page.get_pixmap(dpi=config.dpi, clip=region, alpha=False)
-        data = pixmap.pdfocr_tobytes(language=config.language, tessdata=tessdata)
         image_lines = []
-        with fitz.open(stream=data, filetype="pdf") as recognized:
-            ocr_page = recognized[0]
-            target = fitz.Rect(pixmap.x / zoom, pixmap.y / zoom,
-                               (pixmap.x + pixmap.width) / zoom, (pixmap.y + pixmap.height) / zoom)
-            matrix = ocr_page.rect.torect(target)
-            for block in ocr_page.get_text("dict", flags=TEXT_FLAGS).get("blocks", []):
-                for line in block.get("lines", []):
-                    line["bbox"] = tuple(fitz.Rect(line["bbox"]) * matrix)
-                    for span in line.get("spans", []):
-                        span["bbox"] = tuple(fitz.Rect(span["bbox"]) * matrix)
-                        if "origin" in span:
-                            span["origin"] = tuple(fitz.Point(span["origin"]) * matrix)
-                    if _line_text(line) and not _duplicate_line(line, existing):
-                        image_lines.append(line)
-                        existing.append(line)
+        # White lettering in colored diagram boxes is often omitted by the
+        # engine's page layout detector. Read those labels before the full crop.
+        for label, bounds in label_crops(pixmap):
+            target = fitz.Rect((pixmap.x + bounds.x0) / zoom, (pixmap.y + bounds.y0) / zoom,
+                               (pixmap.x + bounds.x1) / zoom, (pixmap.y + bounds.y1) / zoom)
+            _recognize_pixmap(label, target, config, tessdata, image_lines, existing)
+        target = fitz.Rect(pixmap.x / zoom, pixmap.y / zoom,
+                           (pixmap.x + pixmap.width) / zoom, (pixmap.y + pixmap.height) / zoom)
+        _recognize_pixmap(pixmap, target, config, tessdata, image_lines, existing)
         if image_lines:
             # A figure is one searchable unit, regardless of OCR paragraphs or rows.
             image_lines.sort(key=lambda line: (round(line["bbox"][1], 1), line["bbox"][0]))
             blocks.append({"type": 0, "bbox": tuple(region), "lines": image_lines, "_ocr_image": True})
     return {**native, "blocks": blocks}
+
+
+def _recognize_pixmap(pixmap, target, config, tessdata, image_lines, existing):
+    data = pixmap.pdfocr_tobytes(language=config.language, tessdata=tessdata)
+    with fitz.open(stream=data, filetype="pdf") as recognized:
+        ocr_page = recognized[0]
+        matrix = ocr_page.rect.torect(target)
+        for block in ocr_page.get_text("dict", flags=TEXT_FLAGS).get("blocks", []):
+            for line in block.get("lines", []):
+                line["bbox"] = tuple(fitz.Rect(line["bbox"]) * matrix)
+                for span in line.get("spans", []):
+                    span["bbox"] = tuple(fitz.Rect(span["bbox"]) * matrix)
+                    if "origin" in span:
+                        span["origin"] = tuple(fitz.Point(span["origin"]) * matrix)
+                if _line_text(line) and not _duplicate_line(line, existing):
+                    image_lines.append(line)
+                    existing.append(line)

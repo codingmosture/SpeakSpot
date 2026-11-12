@@ -5,7 +5,7 @@ import { ControlPanel, type SttSource, type SttView } from './components/Control
 import { PdfViewer } from './components/PdfViewer'
 import { ResultCard } from './components/ResultCard'
 import { Timeline } from './components/Timeline'
-import { DEFAULT_SESSION_CONFIG, DEV_TOOLS, HEALTH_POLL_MS } from './config'
+import { DEFAULT_SESSION_CONFIG, HEALTH_POLL_MS } from './config'
 import { useServerStt } from './hooks/useServerStt'
 import { useSpeechRecognition } from './hooks/useSpeechRecognition'
 import type { PDFDocumentProxy } from './lib/pdf'
@@ -443,7 +443,7 @@ function App() {
           onPageChange={setPageNumber}
           blocks={pageBlocks}
           highlight={highlightBlock?.page === pageNumber ? highlightBlock : null}
-          showBlocks={DEV_TOOLS && showBlocks}
+          showBlocks={showBlocks}
           emptyMessage={documentBusy ? 'PDF 업로드·분석 중…' : undefined}
         />
 
@@ -460,7 +460,6 @@ function App() {
             onSubmitText={(text) => void runSearch(text, 'manual')}
             autoFollow={autoFollow}
             onAutoFollowChange={setAutoFollow}
-            devTools={DEV_TOOLS}
             showBlocks={showBlocks}
             onToggleBlocks={setShowBlocks}
             sessionConfig={sessionConfig}

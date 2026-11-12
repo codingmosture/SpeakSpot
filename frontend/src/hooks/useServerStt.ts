@@ -19,7 +19,8 @@ export type ServerSttPhase = 'idle' | 'connecting' | 'listening' | 'stopping'
 
 /** session.stop 후 남은 결과를 기다리는 시간 */
 const DRAIN_TIMEOUT_MS = 3_000
-const READY_TIMEOUT_MS = 5_000
+// 첫 세션의 로컬 STT 모델 초기화에는 수십 초가 걸릴 수 있다.
+const READY_TIMEOUT_MS = 180_000
 
 interface Options {
   url: string | null

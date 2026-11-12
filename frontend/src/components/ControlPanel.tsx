@@ -29,7 +29,6 @@ interface Props {
   autoFollow: boolean
   onAutoFollowChange: (value: boolean) => void
   /* 개발 도구 */
-  devTools: boolean
   showBlocks: boolean
   onToggleBlocks: (value: boolean) => void
   sessionConfig: SessionConfig
@@ -53,7 +52,6 @@ export function ControlPanel(props: Props) {
     onSubmitText,
     autoFollow,
     onAutoFollowChange,
-    devTools,
     showBlocks,
     onToggleBlocks,
     sessionConfig,
@@ -167,7 +165,7 @@ export function ControlPanel(props: Props) {
       </div>
 
       {/* 개발자 메뉴: 기본 설정을 유지하고, 실험할 때만 펼쳐 조절한다. */}
-      {devTools && (
+      {(
         <details className="control-group dev-tools dev-details">
           <summary>개발자 메뉴 · 검색 / STT 설정</summary>
           <p className="hint">설정은 새 검색 세션을 생성할 때 적용됩니다. 기존 PDF는 다시 업로드할 필요 없습니다.</p>

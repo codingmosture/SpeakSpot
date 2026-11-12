@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class SearchSettings:
-    sliding_window_words: int = 40
+    sliding_window_words: int = 15
     local_radius_pages: int = 5
     min_match_score: float = 0.34
     backward_penalty: float = 0.08

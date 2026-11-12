@@ -6,6 +6,7 @@ from typing import Sequence
 
 from app.schemas.models import Block, SearchResult
 from app.search.algorithms.base import SearchAlgorithm
+from app.search.algorithms.sliding_queue import SlidingQueueSearch
 from app.search.config import SearchSettings
 from app.search.registry import create_algorithm, load_model, ALGORITHMS
 
@@ -96,6 +97,25 @@ class SearchEngine:
                 'status': result.status, 'page': result.page, 'block_id': result.block_id,
             })
             return result
+
+    def preview_search(self, session_id: str, text: str) -> SearchResult:
+        """브라우저 중간 STT 결과: 잠정 하이라이트만 계산하고 큐/페이지/타임라인은 그대로 둔다."""
+        if not text.strip():
+            raise ValueError('발화 text는 비어 있을 수 없습니다.')
+        session = self._get_session(session_id)
+        with session.lock:
+            if not isinstance(session.algorithm, SlidingQueueSearch):
+                raise ValueError('실시간 미확정 발화 탐색은 sliding_queue에서만 지원합니다.')
+            started = perf_counter()
+            decision = session.algorithm.preview(text)
+            elapsed = (perf_counter() - started) * 1000
+            return SearchResult(
+                status=decision.status, document_id=session.document_id,
+                session_id=session_id, segment_id=None, page=decision.page,
+                block_id=decision.block_id, score=decision.score,
+                strategy=session.algorithm.name, stage_used=decision.stage_used,
+                model='none', processing_ms=round(elapsed, 3),
+            )
 
     def reset_session(self, session_id: str) -> None:
         session = self._get_session(session_id)

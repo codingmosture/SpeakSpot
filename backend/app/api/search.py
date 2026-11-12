@@ -108,6 +108,17 @@ def search(request: SearchRequest):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@router.post('/search/preview', response_model=SearchResult)
+def preview_search(request: SearchRequest):
+    """브라우저 STT의 임시 문장을 검색한다. 확정 전에는 큐와 타임라인을 변경하지 않는다."""
+    try:
+        return engine.preview_search(request.session_id, request.text)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get('/sessions/{session_id}/search-state')
 def get_search_state(session_id: str):
     try:

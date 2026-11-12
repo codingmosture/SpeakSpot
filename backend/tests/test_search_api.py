@@ -107,3 +107,37 @@ def test_api_jev_without_key_returns_unavailable(monkeypatch):
     })
     assert response.status_code == 503
     assert 'TYPESAFE_API_KEY' in response.json()['detail']
+
+
+def test_api_preview_is_provisional_only():
+    client.post('/api/v1/search/documents/register', json={
+        'document_id': 'preview_api_doc',
+        'blocks': [{
+            'block_id': 'b1', 'page': 1, 'text': '운영체제 프로세스 관리',
+            'block_type': 'paragraph', 'bbox': [0.1, 0.1, 0.8, 0.2],
+            'rects': [[0.1, 0.1, 0.8, 0.2]], 'keywords': [],
+        }],
+    })
+    session = client.post('/api/v1/sessions', json={
+        'document_id': 'preview_api_doc',
+        'config': {'search_strategy': 'sliding_queue', 'sliding_window_words': 15},
+    })
+    assert session.status_code == 201, session.text
+    session_id = session.json()['session_id']
+    for partial in ('운영체제', '운영체제 프로세스', '운영체제 프로세스 관리'):
+        preview = client.post('/api/v1/search/preview', json={
+            'session_id': session_id, 'text': partial, 'segment_id': None,
+        })
+        assert preview.status_code == 200, preview.text
+    state = client.get(f'/api/v1/sessions/{session_id}/search-state').json()
+    assert state['buffer_words'] == []
+    assert client.get(f'/api/v1/sessions/{session_id}/timeline').json()['items'] == []
+    final = client.post('/api/v1/search', json={
+        'session_id': session_id, 'text': '운영체제 프로세스 관리',
+        'segment_id': None,
+    })
+    assert final.status_code == 200
+    assert client.get(f'/api/v1/sessions/{session_id}/search-state').json()['buffer_words'] == [
+        '운영체제', '프로세스', '관리',
+    ]
+

@@ -136,6 +136,22 @@ class SlidingQueueSearch(SearchAlgorithm):
             score=round(best_score, 5), stage_used='sliding_queue',
         )
 
+    def preview(self, speech_text: str) -> AlgorithmResult:
+        """현재 15단어 큐에 미확정 발화를 잠시 반영해 탐색하되 저장하지 않는다.
+
+        브라우저 STT는 같은 문장을 계속 수정해서 전송한다.
+        미확정 전체 문장을 그대로 누적하면 단어가 중복되므로 큐/현재 페이지를 복사해
+        임시 점수만 계산한 뒤 원래 상태로 복원한다. (SearchSession.lock 안에서 호출)
+        """
+        committed_queue = self._queue
+        committed_page = self.current_page
+        self._queue = deque(committed_queue, maxlen=committed_queue.maxlen)
+        try:
+            return self.search(speech_text)
+        finally:
+            self._queue = committed_queue
+            self.current_page = committed_page
+
     def reset(self) -> None:
         self._queue.clear()
         self.current_page = 1

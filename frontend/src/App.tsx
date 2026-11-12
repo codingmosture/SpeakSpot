@@ -83,7 +83,30 @@ function App() {
     () => blocks.filter((b) => b.page === pageNumber),
     [blocks, pageNumber],
   )
-  const highlightBlock = highlight ? (blockMap.get(highlight.blockId) ?? null) : null
+  const committedHighlightBlock = highlight ? (blockMap.get(highlight.blockId) ?? null) : null
+  const livePreviewBlock = previewResult?.status === 'MATCH' && previewResult.block_id
+    ? (blockMap.get(previewResult.block_id) ?? null)
+    : null
+  const highlightBlock = livePreviewBlock ?? committedHighlightBlock
+
+  /* ---------- 실시간 미확정 발화 하이라이트 ----------
+   * STT의 중간 문장은 계속 수정된다. 실제 검색 큐에는 확정 문장만 한 번 추가하고,
+   * 중간 문장은 /search/preview로 별도 조회하여 임시로 하이라이트한다.
+   */
+  const [previewResult, setPreviewResult] = useState<SearchResult | null>(null)
+  const previewVersion = useRef(0)
+  const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const previewText = useRef('')
+  const previewLastRequest = useRef(0)
+  const clearPreview = useCallback(() => {
+    previewVersion.current++
+    previewText.current = ''
+    if (previewTimer.current !== null) {
+      clearTimeout(previewTimer.current)
+      previewTimer.current = null
+    }
+    setPreviewResult(null)
+  }, [])
 
   /* ---------- 타임라인 ---------- */
   const [entries, setEntries] = useState<TimelineEntry[]>([])
@@ -95,10 +118,11 @@ function App() {
   const resetTimeline = useCallback(() => {
     setEntries([])
     setHighlight(null)
+    clearPreview()
     seqOf.current.clear()
     sttFinalAt.current.clear()
     lastAppliedSeq.current = 0
-  }, [])
+  }, [clearPreview])
 
   /* ---------- 세션 (contracts.md §3.4) ---------- */
   const [sessionState, setSessionState] = useState<{
@@ -244,9 +268,53 @@ function App() {
     onHighlight: handleHighlight,
   })
 
-  // 브라우저 STT (Web Speech API) — 서버 STT 준비 전 테스트용, 확정 문장을 텍스트 탐색으로 전송
+  // 중간 결과는 화면에만 반영한다. 250ms 간격으로 마지막 버전만 보내고
+  // 먼저 전송한 요청이 나중에 도착하더라도 오래된 하이라이트로 덮지 않는다.
+  const requestPreview = useCallback((text: string, version: number) => {
+    const current = sessionRef.current
+    if (!current || !api.previewSearch) return
+    const sessionId = current.session_id
+    previewLastRequest.current = performance.now()
+    void api.previewSearch({ session_id: sessionId, text, segment_id: null })
+      .then((result) => {
+        if (version !== previewVersion.current || sessionRef.current?.session_id !== sessionId) return
+        setPreviewResult(result.status === 'MATCH' ? result : null)
+        if (result.status === 'MATCH' && result.page != null && autoFollowRef.current) {
+          setPageNumber(result.page)
+        }
+      })
+      .catch(() => {
+        if (version === previewVersion.current) setPreviewResult(null)
+      })
+  }, [])
+
+  const handleInterim = useCallback((text: string) => {
+    previewVersion.current++
+    previewText.current = text.trim()
+    if (!previewText.current) {
+      clearPreview()
+      return
+    }
+    if (previewTimer.current !== null) return
+    const delay = Math.max(0, 250 - (performance.now() - previewLastRequest.current))
+    previewTimer.current = setTimeout(() => {
+      previewTimer.current = null
+      if (previewText.current) requestPreview(previewText.current, previewVersion.current)
+    }, delay)
+  }, [clearPreview, requestPreview])
+
+  useEffect(() => () => {
+    previewVersion.current++
+    if (previewTimer.current !== null) clearTimeout(previewTimer.current)
+  }, [])
+
+  // 브라우저 STT: 중간 문장으로 즉시 미리보기, 확정 문장은 실제 15단어 큐에 한 번만 반영.
   const browserStt = useSpeechRecognition({
-    onFinal: useCallback((text: string) => void runSearch(text, 'browser-stt'), [runSearch]),
+    onInterim: handleInterim,
+    onFinal: useCallback((text: string) => {
+      clearPreview()
+      void runSearch(text, 'browser-stt')
+    }, [clearPreview, runSearch]),
   })
 
   const stt: SttView =
@@ -305,6 +373,7 @@ function App() {
   function handleSelectEntry(entry: TimelineEntry) {
     const r = entry.result
     if (r?.status !== 'MATCH' || r.block_id == null || r.page == null) return
+    clearPreview()
     setHighlight({ blockId: r.block_id, entryId: entry.id })
     setPageNumber(r.page)
   }

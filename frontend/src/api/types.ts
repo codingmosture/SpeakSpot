@@ -20,6 +20,8 @@ export interface SpeakSpotApi {
   getBlocks(documentId: string, page?: number): Promise<BlocksResponse>
   createSession(body: CreateSessionRequest): Promise<Session>
   search(body: SearchRequest): Promise<SearchResult>
+  /** STT 중간 인식 문장으로 임시 하이라이트만 계산한다. 큐는 확정 시에만 갱신. */
+  previewSearch?(body: SearchRequest): Promise<SearchResult>
   getTimeline(sessionId: string): Promise<TimelineResponse>
   /** 실시간 STT WebSocket 주소. Mock 모드에서는 null */
   streamUrl(sessionId: string): string | null

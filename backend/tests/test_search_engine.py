@@ -124,3 +124,26 @@ def test_default_sliding_queue_keeps_only_latest_15_words():
     assert engine.get_buffer_words('window15_sess') == [
         f'word{i}' for i in range(5, 20)
     ]
+
+
+def test_interim_preview_does_not_duplicate_words_or_commit_page():
+    engine = sample_engine(window=3)
+    assert engine.get_current_page('session') == 1
+    first = engine.preview_search('session', 'DISTINCT')
+    second = engine.preview_search('session', 'DISTINCT 중복 제거')
+    assert first.status == 'MATCH' and second.page == 2
+    # 브라우저 STT가 같은 문장을 여러 번 고쳐도 확정 큐는 비어 있다.
+    assert engine.get_current_page('session') == 1
+    assert engine.get_buffer_words('session') == []
+    assert engine.get_timeline('session') == []
+
+    result = engine.search('session', 'DISTINCT 중복 제거', 'seg_1')
+    assert result.page == 2
+    assert engine.get_buffer_words('session') == ['distinct', '중복', '제거']
+    assert len(engine.get_timeline('session')) == 1
+
+    # 이어서 들어온 미확정 문장은 기존 3단어만 임시로 밀어내고 복원한다.
+    engine.preview_search('session', '정규화 종속성 테이블')
+    assert engine.get_buffer_words('session') == ['distinct', '중복', '제거']
+    assert engine.get_current_page('session') == 2
+

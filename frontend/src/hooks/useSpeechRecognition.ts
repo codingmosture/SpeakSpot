@@ -53,9 +53,11 @@ interface Options {
   lang?: string
   /** 확정된 발화 문장이 나올 때마다 호출 */
   onFinal: (text: string) => void
+  /** 매번 바뀌는 미확정 발화. 빈 문자열은 미확정 발화 종료. */
+  onInterim?: (text: string) => void
 }
 
-export function useSpeechRecognition({ lang = 'ko-KR', onFinal }: Options) {
+export function useSpeechRecognition({ lang = 'ko-KR', onFinal, onInterim }: Options) {
   const supported = getRecognitionCtor() !== null
   const [listening, setListening] = useState(false)
   const [interim, setInterim] = useState('')
@@ -65,10 +67,12 @@ export function useSpeechRecognition({ lang = 'ko-KR', onFinal }: Options) {
   const lastFinalCaptionRef = useRef('')
   const wantListeningRef = useRef(false)
   const onFinalRef = useRef(onFinal)
+  const onInterimRef = useRef(onInterim)
 
   useEffect(() => {
     onFinalRef.current = onFinal
-  }, [onFinal])
+    onInterimRef.current = onInterim
+  }, [onFinal, onInterim])
 
   const start = useCallback(() => {
     const Ctor = getRecognitionCtor()
@@ -103,7 +107,10 @@ export function useSpeechRecognition({ lang = 'ko-KR', onFinal }: Options) {
         }
       }
       // 브라우저가 확정 결과를 내는 순간에도 마지막 자막을 바로 지우지 않는다.
-      setInterim(partials.length > 0 ? partials.join(' ') : lastFinalCaptionRef.current)
+      const liveText = partials.join(' ')
+      setInterim(liveText || lastFinalCaptionRef.current)
+      // 자막 표시와 별개로 확정 전에도 페이지를 예측해 이동시킨다.
+      onInterimRef.current?.(liveText)
     }
 
     recognition.onerror = (event) => {
@@ -130,6 +137,7 @@ export function useSpeechRecognition({ lang = 'ko-KR', onFinal }: Options) {
       setListening(false)
       setInterim('')
       lastFinalCaptionRef.current = ''
+      onInterimRef.current?.('')
     }
 
     recognitionRef.current = recognition
@@ -137,6 +145,7 @@ export function useSpeechRecognition({ lang = 'ko-KR', onFinal }: Options) {
     setError(null)
     lastFinalCaptionRef.current = ''
     setInterim('')
+    onInterimRef.current?.('')
     try {
       recognition.start()
       setListening(true)

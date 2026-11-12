@@ -9,7 +9,7 @@ import type { SessionConfig } from './types/contracts'
  *   모델 이름은 현재 contracts.md 예시값이므로, 최종 조합이 정해지면 여기 값을 갱신한다.
  */
 export const DEFAULT_SESSION_CONFIG: SessionConfig = {
-  stt_model: 'faster-whisper-small',
+  stt_model: 'faster-whisper-tiny',
   search_model: 'bge-m3',
   search_strategy: 'hybrid',
   local_radius_pages: 1,

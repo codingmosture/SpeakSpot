@@ -50,6 +50,12 @@ function App() {
   const [blocks, setBlocks] = useState<Block[]>([])
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
   const [documentBusy, setDocumentBusy] = useState(false)
+  const [sessionConfig, setSessionConfig] = useState(() => ({ ...DEFAULT_SESSION_CONFIG }))
+  const [appliedConfig, setAppliedConfig] = useState(() => ({ ...DEFAULT_SESSION_CONFIG }))
+  const [configRevision, setConfigRevision] = useState(0)
+  const [configBusy, setConfigBusy] = useState(false)
+  const [liveWords, setLiveWords] = useState<string[]>([])
+  const configDirty = JSON.stringify(sessionConfig) !== JSON.stringify(appliedConfig)
 
   const [pageNumber, setPageNumber] = useState(1)
 
@@ -79,6 +85,10 @@ function App() {
    * 중간 문장은 /search/preview로 별도 조회하여 임시로 하이라이트한다.
    */
   const [previewResult, setPreviewResult] = useState<SearchResult | null>(null)
+  const liveSeq = useRef(0)
+  const liveGeneration = useRef(0)
+  const liveQueue = useRef<Array<{ text: string; isFinal: boolean; utteranceId: string; sequence: number }>>([])
+  const liveSending = useRef(false)
   const previewVersion = useRef(0)
   const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const previewText = useRef('')
@@ -116,6 +126,9 @@ function App() {
   const sttFinalAt = useRef(new Map<string, number>())
 
   const resetTimeline = useCallback(() => {
+    liveGeneration.current++
+    liveQueue.current = []
+    setLiveWords([])
     setEntries([])
     setHighlight(null)
     clearPreview()
@@ -135,14 +148,22 @@ function App() {
   const sessionReady = sessionState?.key === sessionKey ? sessionState : null
   const session = sessionReady?.session ?? null
 
-  // 문서가 바뀌면 새 세션 생성. 설정은 고정값(config.ts) — 모델·전략은 사용자가 고르지 않는다.
+  // 문서나 개발자 설정이 바뀌면 새 세션 생성. 세션마다 독립적인 검색 상태 유지.
   useEffect(() => {
     if (!activeDoc || !sessionKey || activeDoc.status !== 'ready') return
     let cancelled = false
+    setConfigBusy(true)
+    setSessionState(null)
+    resetTimeline()
     const timer = setTimeout(() => {
       api
-        .createSession({ document_id: activeDoc.document_id, config: DEFAULT_SESSION_CONFIG })
-        .then((s) => !cancelled && setSessionState({ key: sessionKey, session: s, error: null }))
+        .createSession({ document_id: activeDoc.document_id, config: appliedConfig })
+        .then((s) => {
+          if (!cancelled) {
+            setSessionState({ key: sessionKey, session: s, error: null })
+            setConfigBusy(false)
+          }
+        })
         .catch(
           (err) =>
             !cancelled &&
@@ -152,12 +173,13 @@ function App() {
               error: errorMessage(err, '세션을 생성하지 못했습니다.'),
             }),
         )
+        .finally(() => { if (!cancelled) setConfigBusy(false) })
     }, 300)
     return () => {
       cancelled = true
       clearTimeout(timer)
     }
-  }, [activeDoc, sessionKey])
+  }, [activeDoc, sessionKey, appliedConfig, configRevision, resetTimeline])
 
   const sessionRef = useRef<Session | null>(null)
   const autoFollowRef = useRef(autoFollow)
@@ -308,13 +330,75 @@ function App() {
     if (previewTimer.current !== null) clearTimeout(previewTimer.current)
   }, [])
 
-  // 브라우저 STT: 중간 문장으로 즉시 미리보기, 확정 문장은 실제 15단어 큐에 한 번만 반영.
+  // 브라우저 STT의 매 중간 결과를 /search/live로 순서대로 전달한다.
+  // 이전 요청이 완료되기 전에는 다음 가설을 대기시켜 큐가 역순으로 바뀌지 않게 한다.
+  // 같은 발화의 미확정 수정은 최신 가설만 유지하고 확정 이벤트는 보존한다.
+  const flushLive = useCallback(async (generation: number) => {
+    if (liveSending.current || !api.liveSearch) return
+    liveSending.current = true
+    try {
+      while (generation === liveGeneration.current && liveQueue.current.length) {
+        const update = liveQueue.current.shift()!
+        const current = sessionRef.current
+        if (!current) continue
+        try {
+          const result = await api.liveSearch({
+            session_id: current.session_id,
+            utterance_id: update.utteranceId,
+            text: update.text,
+            sequence: update.sequence,
+            is_final: update.isFinal,
+          })
+          if (generation !== liveGeneration.current ||
+              sessionRef.current?.session_id !== current.session_id) continue
+          setLiveWords(result.buffer_words)
+          setPreviewResult(result.status === 'MATCH' ? result : null)
+          if (result.status === 'MATCH' && result.block_id && result.page != null) {
+            setHighlight({ blockId: result.block_id, entryId: `live_${update.utteranceId}` })
+            if (autoFollowRef.current) setPageNumber(result.page)
+          }
+          if (update.isFinal) {
+            const id = `live_${update.utteranceId}`
+            if (!seqOf.current.has(id)) {
+              addEntry(id, update.text, 'browser-stt', update.utteranceId)
+              applyResult(id, result, null)
+            }
+          }
+        } catch (err) {
+          if (generation === liveGeneration.current) {
+            setNotice(errorMessage(err, '실시간 검색에 실패했습니다.'))
+          }
+        }
+      }
+    } finally {
+      liveSending.current = false
+      if (generation !== liveGeneration.current && liveQueue.current.length) {
+        void flushLive(liveGeneration.current)
+      }
+    }
+  }, [addEntry, applyResult])
+
+  const handleLiveUpdate = useCallback((text: string, isFinal: boolean, utteranceId: string) => {
+    if (!text.trim() || !sessionRef.current) return
+    const update = { text: text.trim(), isFinal, utteranceId, sequence: ++liveSeq.current }
+    if (!isFinal) {
+      // 브라우저가 같은 문장을 여러 번 수정할 때 오래된 중간 가설을 버린다.
+      liveQueue.current = liveQueue.current.filter(
+        (item) => item.isFinal || item.utteranceId !== utteranceId,
+      )
+    } else {
+      liveQueue.current = liveQueue.current.filter(
+        (item) => item.isFinal || item.utteranceId !== utteranceId,
+      )
+    }
+    liveQueue.current.push(update)
+    void flushLive(liveGeneration.current)
+  }, [flushLive])
+
+  // 브라우저 STT: 매 중간 가설이 실제 큐/현재 페이지를 갱신한다.
   const browserStt = useSpeechRecognition({
-    onInterim: handleInterim,
-    onFinal: useCallback((text: string) => {
-      clearPreview()
-      void runSearch(text, 'browser-stt')
-    }, [clearPreview, runSearch]),
+    onUpdate: handleLiveUpdate,
+    onFinal: useCallback((text: string) => void runSearch(text, 'browser-stt'), [runSearch]),
   })
 
   const stt: SttView =
@@ -329,6 +413,12 @@ function App() {
           stop: () => void serverStt.stop(),
         }
       : { ...browserStt, busy: false }
+
+  const applyDeveloperSettings = () => {
+    if (configBusy || !session || stt.listening || stt.busy) return
+    setAppliedConfig({ ...sessionConfig })
+    setConfigRevision((revision) => revision + 1)
+  }
 
   /* ---------- 문서 업로드 (contracts.md §3.1, §3.2) ---------- */
 
@@ -423,6 +513,12 @@ function App() {
             devTools={DEV_TOOLS}
             showBlocks={showBlocks}
             onToggleBlocks={setShowBlocks}
+            sessionConfig={sessionConfig}
+            onConfigChange={setSessionConfig}
+            onApplyConfig={applyDeveloperSettings}
+            configBusy={configBusy}
+            configDirty={configDirty}
+            liveWords={liveWords}
           />
           <ResultCard entry={currentEntry} />
           <Timeline

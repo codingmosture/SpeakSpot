@@ -17,6 +17,9 @@ interface Props {
   emptyMessage?: string
 }
 
+const pageHeight = (element: HTMLDivElement) =>
+  element.firstElementChild?.getBoundingClientRect().height ?? 0
+
 export function PdfViewer({
   pdf,
   pageCount,
@@ -28,11 +31,32 @@ export function PdfViewer({
   emptyMessage,
 }: Props) {
   const hasDocument = pageCount > 0
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const visiblePage = useRef(pageNumber)
+
+  // 검색·타임라인·버튼으로 선택한 페이지와 세로 스크롤 위치를 동기화한다.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el || visiblePage.current === pageNumber) return
+    visiblePage.current = pageNumber
+    el.scrollTop = (pageNumber - 1) * pageHeight(el)
+  }, [pageNumber])
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const observer = new ResizeObserver(() => {
+      el.scrollTop = (visiblePage.current - 1) * pageHeight(el)
+    })
+    observer.observe(el)
+    el.scrollTop = (visiblePage.current - 1) * pageHeight(el)
+    return () => observer.disconnect()
+  }, [pdf, pageCount])
 
   return (
     <section className="viewer" aria-label="PDF 뷰어">
       <div className="viewer-toolbar">
-        <span className="viewer-label">PDF 뷰어</span>
+        <span className="viewer-label">PDF 뷰어 · 위아래로 스크롤</span>
         <div className="pager">
           <button
             type="button"
@@ -41,7 +65,7 @@ export function PdfViewer({
             onClick={() => onPageChange(pageNumber - 1)}
             aria-label="이전 페이지"
           >
-            ‹
+            ↑
           </button>
           <span className="page-indicator" aria-live="polite">
             {hasDocument ? (
@@ -59,27 +83,64 @@ export function PdfViewer({
             onClick={() => onPageChange(pageNumber + 1)}
             aria-label="다음 페이지"
           >
-            ›
+            ↓
           </button>
         </div>
       </div>
 
-      <div className="viewer-scroll">
+      <div ref={scrollRef} className="viewer-scroll" tabIndex={hasDocument ? 0 : undefined}
+        aria-label="PDF 페이지 세로 탐색"
+        onScroll={(event) => {
+          const el = event.currentTarget
+          const height = pageHeight(el)
+          if (!hasDocument || height === 0) return
+          const next = Math.max(1, Math.min(pageCount, Math.round(el.scrollTop / height) + 1))
+          if (next !== visiblePage.current) {
+            visiblePage.current = next
+            onPageChange(next)
+          }
+        }}
+        onKeyDown={(event) => {
+          if (!hasDocument || event.target !== event.currentTarget) return
+          const next = event.key === 'ArrowDown' || event.key === 'PageDown'
+            ? Math.min(pageCount, pageNumber + 1)
+            : event.key === 'ArrowUp' || event.key === 'PageUp'
+              ? Math.max(1, pageNumber - 1)
+              : null
+          if (next !== null) {
+            event.preventDefault()
+            onPageChange(next)
+          }
+        }}>
         {!hasDocument ? (
           <div className="viewer-empty" role="status">
             <span className="empty-document-icon" aria-hidden>▤</span>
             <h2>{emptyMessage ?? '문서에서 시작하세요'}</h2>
             <p>문서 영역의 PDF 업로드로 파일을 열면<br />음성과 텍스트로 내용을 찾을 수 있습니다.</p>
           </div>
-        ) : pdf ? (
-          <PdfPage pdf={pdf} pageNumber={pageNumber}>
-            <BlockOverlay blocks={blocks} highlight={highlight} showBlocks={showBlocks} />
-          </PdfPage>
         ) : (
-          <div className="page-sheet mock">
-            <span className="page-label">Page {pageNumber} · Mock</span>
-            <BlockOverlay blocks={blocks} highlight={highlight} showBlocks={showBlocks} showText />
-          </div>
+          Array.from({ length: pageCount }, (_, index) => {
+            const page = index + 1
+            const current = page === pageNumber
+            // Keep canvas memory bounded even in long lecture documents.
+            const nearCurrent = Math.abs(page - pageNumber) <= 1
+            return (
+              <div className="viewer-page" key={page} aria-label={`${page}페이지`}>
+                {pdf && nearCurrent ? (
+                  <PdfPage pdf={pdf} pageNumber={page}>
+                    {current && <BlockOverlay blocks={blocks} highlight={highlight} showBlocks={showBlocks} />}
+                  </PdfPage>
+                ) : pdf ? (
+                  <span className="muted">{page}페이지</span>
+                ) : (
+                  <div className="page-sheet mock">
+                    <span className="page-label">Page {page} · Mock</span>
+                    {current && <BlockOverlay blocks={blocks} highlight={highlight} showBlocks={showBlocks} showText />}
+                  </div>
+                )}
+              </div>
+            )
+          })
         )}
       </div>
     </section>
@@ -183,13 +244,6 @@ function BlockOverlay({
   showBlocks: boolean
   showText?: boolean
 }) {
-  const highlightRef = useRef<HTMLElement | null>(null)
-
-  // 하이라이트된 영역이 화면에 보이도록 스크롤
-  useEffect(() => {
-    highlightRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
-  }, [highlight])
-
   // 실제 PDF: backend 가 준 rects(줄 단위 좌표)를 칠한다. 비어 있으면 bbox 로 대체.
   // Mock 페이지(showText): 글자를 브라우저가 직접 줄바꿈하므로 좌표 대신 글자 자체에 칠한다.
   const highlightRects =
@@ -216,9 +270,6 @@ function BlockOverlay({
                 <mark
                   // 하이라이트 블록이 바뀔 때 애니메이션을 다시 재생
                   key={highlight.block_id}
-                  ref={(el) => {
-                    highlightRef.current = el
-                  }}
                   className="text-highlight"
                 >
                   {block.text}
@@ -234,13 +285,6 @@ function BlockOverlay({
         <div
           // 하이라이트 블록이 바뀔 때 애니메이션을 다시 재생하도록 key 에 block_id 포함
           key={`${highlight?.block_id}-${i}`}
-          ref={
-            i === 0
-              ? (el) => {
-                  highlightRef.current = el
-                }
-              : undefined
-          }
           className="highlight-rect"
           style={bboxToStyle(rect)}
         />

@@ -379,15 +379,27 @@ input:disabled, select:disabled {
 .viewer-scroll {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
-  padding: 20px;
+  overflow-y: auto;
+  overflow-x: hidden;
   background: #eceef0;
+  overscroll-behavior: contain;
+  scroll-snap-type: y proximity;
+}
+.viewer-page {
+  height: 100%;
+  padding: 20px;
   display: flex;
   justify-content: center;
   align-items: center;
   container-type: size;
+  scroll-snap-align: start;
 }
 .viewer-empty {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   margin: auto;
   padding: 60px 16px;
   text-align: center;
@@ -758,7 +770,7 @@ input:disabled, select:disabled {
   .sidebar > section {
     padding: 16px;
   }
-  .viewer-scroll {
+  .viewer-page {
     padding: 18px;
   }
 }
@@ -826,7 +838,7 @@ input:disabled, select:disabled {
   .viewer-toolbar {
     padding-inline: 14px;
   }
-  .viewer-scroll {
+  .viewer-page {
     padding: 12px;
   }
   .drawer-header {

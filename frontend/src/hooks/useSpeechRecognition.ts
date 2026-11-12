@@ -62,6 +62,7 @@ export function useSpeechRecognition({ lang = 'ko-KR', onFinal }: Options) {
   const [error, setError] = useState<string | null>(null)
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
+  const lastFinalCaptionRef = useRef('')
   const wantListeningRef = useRef(false)
   const onFinalRef = useRef(onFinal)
 
@@ -83,15 +84,26 @@ export function useSpeechRecognition({ lang = 'ko-KR', onFinal }: Options) {
     recognition.interimResults = true
 
     recognition.onresult = (event) => {
-      let interimText = ''
+      // 확정 문장은 검색으로 한 번만 보낸다.
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i]
         const transcript = result[0].transcript.trim()
-        if (!transcript) continue
-        if (result.isFinal) onFinalRef.current(transcript)
-        else interimText += transcript + ' '
+        if (!transcript || !result.isFinal) continue
+        lastFinalCaptionRef.current = transcript
+        onFinalRef.current(transcript)
       }
-      setInterim(interimText.trim())
+
+      // resultIndex부터만 훑으면 이전에 온 중간 인식 문장이 사라지기 쉬우므로,
+      // 아직 확정되지 않은 모든 중간 인식 결과를 매 이벤트마다 갱신한다.
+      const partials: string[] = []
+      for (let i = 0; i < event.results.length; i++) {
+        const result = event.results[i]
+        if (!result.isFinal && result[0].transcript.trim()) {
+          partials.push(result[0].transcript.trim())
+        }
+      }
+      // 브라우저가 확정 결과를 내는 순간에도 마지막 자막을 바로 지우지 않는다.
+      setInterim(partials.length > 0 ? partials.join(' ') : lastFinalCaptionRef.current)
     }
 
     recognition.onerror = (event) => {
@@ -117,11 +129,14 @@ export function useSpeechRecognition({ lang = 'ko-KR', onFinal }: Options) {
       wantListeningRef.current = false
       setListening(false)
       setInterim('')
+      lastFinalCaptionRef.current = ''
     }
 
     recognitionRef.current = recognition
     wantListeningRef.current = true
     setError(null)
+    lastFinalCaptionRef.current = ''
+    setInterim('')
     try {
       recognition.start()
       setListening(true)

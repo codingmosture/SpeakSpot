@@ -137,7 +137,7 @@ REAL_OCR = all((DEFAULT_TESSDATA / f"{lang}.traineddata").is_file() for lang in 
 
 
 @pytest.mark.skipif(not REAL_OCR, reason="Run python scripts/setup_ocr.py for real OCR tests")
-def test_image_table_cells_are_extracted_independently_of_slide_layout(tmp_path):
+def test_image_table_cells_are_grouped_as_one_figure(tmp_path, monkeypatch):
     path = tmp_path / "image-table.pdf"
     with fitz.open() as artwork:
         table = artwork.new_page(width=600, height=240)
@@ -157,12 +157,19 @@ def test_image_table_cells_are_extracted_independently_of_slide_layout(tmp_path)
         page.insert_text((560, 680), "1", fontsize=10)
         page.insert_image(fitz.Rect(40, 180, 560, 388), stream=raster.tobytes("png"))
         doc.save(path)
-    _, blocks = PDFParser(OCRConfig(tessdata=str(DEFAULT_TESSDATA))).parse(str(path))
+    parser = PDFParser(OCRConfig(tessdata=str(DEFAULT_TESSDATA)))
+    monkeypatch.setattr(parser, "_detect_tables_fast", lambda *args: [(0, 0.2, 1, 0.7)])
+    _, blocks = parser.parse(str(path))
     text = " ".join(b.text for b in blocks)
     assert text.count("Database lecture") == 1
     for value in ["customer", "apple", "banana", "orange", "1000", "2500"]:
         assert value in text
     assert not any(b.text == "1" for b in blocks)
+    assert len(blocks) == 2  # Native heading and one complete table image.
+    figure = next(b for b in blocks if "apple" in b.text)
+    assert "banana" in figure.text and "orange" in figure.text
+    assert figure.bbox == pytest.approx((40 / 600, 180 / 700, 560 / 600, 388 / 700), abs=0.0001)
+    assert figure.rects == [figure.bbox]
     assert_valid_blocks(blocks)
 
 
@@ -179,12 +186,56 @@ def test_real_image_text_and_coordinates(tmp_path, native, rotation):
     assert "운영체제" in joined
     assert joined.count("Native document title") == int(native)
     image_block = next(b for b in blocks if "IMAGE" in b.text)
+    assert "운영체제" in image_block.text
+    assert len(blocks) == 1 + int(native)
     with fitz.open(path) as doc:
         page = doc[0]
         expected = fitz.Rect(50, 200, 550, 400) * page.rotation_matrix
         cx = (image_block.bbox[0] + image_block.bbox[2]) / 2 * page.rect.width
         cy = (image_block.bbox[1] + image_block.bbox[3]) / 2 * page.rect.height
         assert expected.contains(fitz.Point(cx, cy))
+        assert image_block.bbox == pytest.approx(
+            (expected.x0 / page.rect.width, expected.y0 / page.rect.height,
+             expected.x1 / page.rect.width, expected.y1 / page.rect.height), abs=0.0001)
+        assert image_block.rects == [image_block.bbox]
+
+
+@pytest.mark.parametrize("image", [False, True])
+def test_only_image_bullets_stay_grouped(tmp_path, monkeypatch, image):
+    import app.documents.parser as parser_module
+
+    path = make_pdf(tmp_path / "bullets.pdf", native=False)
+    block = {
+        "type": 0, "bbox": (50, 200, 550, 400), "_ocr_image": image,
+        "lines": [
+            {"bbox": (60, y, 400, y + 20), "spans": [{"text": text, "size": 12, "font": "test"}]}
+            for text, y in [("1. First item", 220), ("2. Second item", 260)]
+        ],
+    }
+    monkeypatch.setattr(parser_module, "extract_page_text", lambda *args: {"blocks": [block]})
+    _, blocks = PDFParser().parse(str(path))
+    assert len(blocks) == (1 if image else 2)
+    if image:
+        assert "First item" in blocks[0].text and "Second item" in blocks[0].text
+        assert blocks[0].rects == [blocks[0].bbox]
+
+
+@pytest.mark.skipif(not REAL_OCR, reason="Run python scripts/setup_ocr.py for real OCR tests")
+def test_separate_figures_remain_separate_blocks(tmp_path):
+    path = make_pdf(tmp_path / "two-figures.pdf", image=True)
+    with fitz.open(path) as doc:
+        with fitz.open() as artwork:
+            page = artwork.new_page(width=600, height=240)
+            page.insert_text((40, 70), "SECOND FIGURE", fontsize=28)
+            raster = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+        doc[0].insert_image(fitz.Rect(50, 450, 550, 650), stream=raster.tobytes("png"))
+        doc.saveIncr()
+    _, blocks = PDFParser(OCRConfig(tessdata=str(DEFAULT_TESSDATA))).parse(str(path))
+    first = next(b for b in blocks if "IMAGE" in b.text)
+    second = next(b for b in blocks if "SECOND" in b.text)
+    assert first.block_id != second.block_id
+    assert "SECOND" not in first.text and "IMAGE" not in second.text
+    assert len(blocks) == 3
 
 
 @pytest.mark.skipif(not REAL_OCR, reason="Run python scripts/setup_ocr.py for real OCR tests")

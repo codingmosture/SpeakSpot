@@ -68,8 +68,9 @@ class PDFParser:
                              if not self._is_page_number(line, page_num, upright.width, upright.height)]
                     if lines:
                         block["lines"] = lines
-                        block["bbox"] = (min(l["bbox"][0] for l in lines), min(l["bbox"][1] for l in lines),
-                                         max(l["bbox"][2] for l in lines), max(l["bbox"][3] for l in lines))
+                        if not block.get("_ocr_image"):
+                            block["bbox"] = (min(l["bbox"][0] for l in lines), min(l["bbox"][1] for l in lines),
+                                             max(l["bbox"][2] for l in lines), max(l["bbox"][3] for l in lines))
                         filtered_blocks.append(block)
                 raw_text_blocks_initial = filtered_blocks
 
@@ -88,6 +89,10 @@ class PDFParser:
                 # 표 내부 텍스트 및 다중 불릿 강제 분할
                 raw_text_blocks = []
                 for b in raw_text_blocks_initial:
+                    if b.get("_ocr_image"):
+                        # Keep all figure text together, including tables and bullets.
+                        raw_text_blocks.append(b)
+                        continue
                     b_bbox = self._normalize_bbox(b["bbox"], width, height)
                     if b_bbox is None:
                         continue
@@ -188,7 +193,7 @@ class PDFParser:
 
                     max_block_font = max(block_font_sizes) if block_font_sizes else base_font_size
 
-                    block_type = self._classify_block_type(
+                    block_type = "other" if b.get("_ocr_image") else self._classify_block_type(
                         text=full_text,
                         max_font_size=max_block_font,
                         base_page_font_size=base_font_size,
@@ -209,7 +214,7 @@ class PDFParser:
                             text=full_text,
                             block_type=block_type,
                             bbox=norm_bbox,
-                            rects=rects if rects else [norm_bbox],
+                            rects=[norm_bbox] if b.get("_ocr_image") else (rects if rects else [norm_bbox]),
                             keywords=[]
                         )
                     )

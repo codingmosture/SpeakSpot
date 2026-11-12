@@ -121,13 +121,13 @@ def _recognize_images(page: fitz.Page, native: dict, regions: list[fitz.Rect],
         # in slide screenshots and can take longer than the upload timeout.
         pixmap = page.get_pixmap(dpi=config.dpi, clip=region, alpha=False)
         data = pixmap.pdfocr_tobytes(language=config.language, tessdata=tessdata)
+        image_lines = []
         with fitz.open(stream=data, filetype="pdf") as recognized:
             ocr_page = recognized[0]
             target = fitz.Rect(pixmap.x / zoom, pixmap.y / zoom,
                                (pixmap.x + pixmap.width) / zoom, (pixmap.y + pixmap.height) / zoom)
             matrix = ocr_page.rect.torect(target)
             for block in ocr_page.get_text("dict", flags=TEXT_FLAGS).get("blocks", []):
-                lines = []
                 for line in block.get("lines", []):
                     line["bbox"] = tuple(fitz.Rect(line["bbox"]) * matrix)
                     for span in line.get("spans", []):
@@ -135,11 +135,10 @@ def _recognize_images(page: fitz.Page, native: dict, regions: list[fitz.Rect],
                         if "origin" in span:
                             span["origin"] = tuple(fitz.Point(span["origin"]) * matrix)
                     if _line_text(line) and not _duplicate_line(line, existing):
-                        lines.append(line)
+                        image_lines.append(line)
                         existing.append(line)
-                if lines:
-                    block["lines"] = lines
-                    block["bbox"] = (min(l["bbox"][0] for l in lines), min(l["bbox"][1] for l in lines),
-                                     max(l["bbox"][2] for l in lines), max(l["bbox"][3] for l in lines))
-                    blocks.append(block)
+        if image_lines:
+            # A figure is one searchable unit, regardless of OCR paragraphs or rows.
+            image_lines.sort(key=lambda line: (round(line["bbox"][1], 1), line["bbox"][0]))
+            blocks.append({"type": 0, "bbox": tuple(region), "lines": image_lines, "_ocr_image": True})
     return {**native, "blocks": blocks}

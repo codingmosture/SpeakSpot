@@ -20,7 +20,7 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install fastapi uvicorn python-multipart httpx pytest numpy pymupdf kiwipiepy
+          python -m pip install -r requirements.txt
       - name: Compile Python modules
         run: python -m compileall -q app
       - name: Run search and integration tests (mock models)

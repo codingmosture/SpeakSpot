@@ -1,8 +1,4 @@
-"""실제 검색 로직용 API. 기존 /api/search Mock API는 유지한다.
-
-블록 등록은 PDF 파서 담당 모듈과 연결하기 전까지 사용하는 임시 어댑터다.
-운영 환경에서는 PDF 파서가 SearchEngine.register_document를 직접 호출한다.
-"""
+"""Search sessions, live hypotheses, preview and timeline endpoints."""
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
@@ -16,6 +12,20 @@ from app.search.models.base import ModelRequestError, ModelUnavailableError
 router = APIRouter(prefix='/api/v1', tags=['Search'])
 engine = SearchEngine()
 session_configs: dict[str, SessionConfig] = {}
+
+
+def _invoke(function, *args, invalid_status=400):
+    """Use one mapping for known engine failures; keep endpoint-specific conflicts."""
+    try:
+        return function(*args)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(invalid_status, str(exc)) from exc
+    except ModelUnavailableError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except ModelRequestError as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
 class RegisterDocumentRequest(BaseModel):
@@ -53,10 +63,7 @@ def list_search_options():
 
 @router.post('/search/documents/register', status_code=201)
 def register_document(request: RegisterDocumentRequest):
-    try:
-        engine.register_document(request.document_id, request.blocks)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _invoke(engine.register_document, request.document_id, request.blocks)
     return {'document_id': request.document_id, 'block_count': len(request.blocks)}
 
 
@@ -77,35 +84,15 @@ def create_session(request: CreateSessionRequest):
         jev_min_confidence=config.jev_min_confidence,
         max_jev_candidates=config.max_jev_candidates,
     )
-    try:
-        engine.create_session(
-            session_id, request.document_id, config.search_strategy,
-            config.search_model, settings,
-        )
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ModelUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ModelRequestError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _invoke(engine.create_session, session_id, request.document_id,
+            config.search_strategy, config.search_model, settings)
     session_configs[session_id] = config
     return {'session_id': session_id, 'document_id': request.document_id, 'status': 'created'}
 
 
 @router.post('/search', response_model=SearchResult)
 def search(request: SearchRequest):
-    try:
-        return engine.search(request.session_id, request.text, request.segment_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except ModelUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ModelRequestError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return _invoke(engine.search, request.session_id, request.text, request.segment_id)
 
 
 class LiveSearchRequest(BaseModel):
@@ -119,54 +106,33 @@ class LiveSearchRequest(BaseModel):
 @router.post('/search/live')
 def live_search(request: LiveSearchRequest):
     """최신 중간/확정 STT 가설마다 검색 큐와 현재 페이지를 갱신한다."""
-    try:
-        result, words, current_page = engine.live_search(
-            request.session_id, request.text, request.utterance_id,
-            request.sequence, request.is_final,
-        )
-        return {**result.model_dump(), 'buffer_words': words,
-                'current_page': current_page, 'sequence': request.sequence}
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    result, words, current_page = _invoke(
+        engine.live_search, request.session_id, request.text, request.utterance_id,
+        request.sequence, request.is_final, invalid_status=409,
+    )
+    return {**result.model_dump(), 'buffer_words': words,
+            'current_page': current_page, 'sequence': request.sequence}
 
 
 @router.post('/search/preview', response_model=SearchResult)
 def preview_search(request: SearchRequest):
     """브라우저 STT의 임시 문장을 검색한다. 확정 전에는 큐와 타임라인을 변경하지 않는다."""
-    try:
-        return engine.preview_search(request.session_id, request.text)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _invoke(engine.preview_search, request.session_id, request.text)
 
 
 @router.get('/sessions/{session_id}/search-state')
 def get_search_state(session_id: str):
-    try:
-        return {
-            'session_id': session_id,
-            'current_page': engine.get_current_page(session_id),
-            'buffer_words': engine.get_buffer_words(session_id),
-        }
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {'session_id': session_id,
+            'current_page': _invoke(engine.get_current_page, session_id),
+            'buffer_words': _invoke(engine.get_buffer_words, session_id)}
 
 
 @router.post('/sessions/{session_id}/reset-search')
 def reset_search(session_id: str):
-    try:
-        engine.reset_session(session_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _invoke(engine.reset_session, session_id)
     return {'session_id': session_id, 'current_page': 1, 'status': 'reset'}
 
 
 @router.get('/sessions/{session_id}/timeline')
 def get_timeline(session_id: str):
-    try:
-        return {'session_id': session_id, 'items': engine.get_timeline(session_id)}
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {'session_id': session_id, 'items': _invoke(engine.get_timeline, session_id)}

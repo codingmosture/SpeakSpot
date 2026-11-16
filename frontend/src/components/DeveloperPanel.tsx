@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { SessionConfig, SearchStrategy } from '../types/contracts'
-import type { SttSource } from './RecordingToolbar'
+import type { SttSource } from './AppHeader'
 
 interface Props {
   open: boolean

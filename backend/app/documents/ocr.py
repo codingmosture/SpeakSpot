@@ -46,7 +46,8 @@ def extract_page_text(page: fitz.Page, config: OCRConfig) -> dict:
         return native
 
     try:
-        tessdata = fitz.get_tessdata(config.tessdata)
+        data_path = config.tessdata or (str(DEFAULT_TESSDATA) if DEFAULT_TESSDATA.is_dir() else None)
+        tessdata = fitz.get_tessdata(data_path)
         missing = [
             lang for lang in config.language.split("+")
             if not (Path(tessdata) / f"{lang}.traineddata").is_file()

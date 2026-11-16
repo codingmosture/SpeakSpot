@@ -177,7 +177,7 @@ def main():
     except Exception as error:
         # Provider adapters already sanitize remote request errors and credentials.
         print(f"실행 실패: {error}", file=sys.stderr)
-        print("설치: python -m pip install -r app/stt/requirements/requirements-stt-live.txt\n"
+        print("설치: python -m pip install -r requirements.txt\n"
               "장치 확인: python -m app.stt.live --list-devices", file=sys.stderr)
         return 1
     return 0

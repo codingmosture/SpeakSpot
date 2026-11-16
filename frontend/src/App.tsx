@@ -1,13 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, ApiError } from './api/client'
-import { AppHeader, type ServerStatus } from './components/AppHeader'
-import { ControlPanel } from './components/ControlPanel'
-import { DocumentPanel } from './components/DocumentPanel'
+import { AppHeader, RecordingToolbar, type ServerStatus, type SttSource, type SttView } from './components/AppHeader'
+import { ControlPanel, DocumentPanel } from './components/ControlPanel'
 import { DeveloperPanel } from './components/DeveloperPanel'
-import { RecordingToolbar, type SttSource, type SttView } from './components/RecordingToolbar'
 import { PdfViewer } from './components/PdfViewer'
-import { ResultCard } from './components/ResultCard'
-import { Timeline } from './components/Timeline'
+import { Timeline, ResultCard } from './components/Timeline'
 import { DEFAULT_SESSION_CONFIG, HEALTH_POLL_MS } from './config'
 import { useServerStt } from './hooks/useServerStt'
 import { useSpeechRecognition } from './hooks/useSpeechRecognition'
@@ -26,7 +23,6 @@ const errorMessage = (err: unknown, fallback: string) =>
   err instanceof ApiError ? err.message : fallback
 
 function App() {
-  /* ---------- 서버 상태 ---------- */
   const [health, setHealth] = useState<ServerStatus>('checking')
   const serverStatus: ServerStatus = api.mode === 'mock' ? 'mock' : health
 
@@ -49,7 +45,6 @@ function App() {
   const [notice, setNotice] = useState<string | null>(null)
   const [developerOpen, setDeveloperOpen] = useState(false)
 
-  /* ---------- 문서 · 블록 · PDF ---------- */
   const [activeDoc, setActiveDoc] = useState<Document | null>(null)
   const [blocks, setBlocks] = useState<Block[]>([])
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
@@ -88,10 +83,6 @@ function App() {
 
   const blockMap = useMemo(() => new Map(blocks.map((b) => [b.block_id, b])), [blocks])
 
-  /* ---------- 실시간 미확정 발화 하이라이트 ----------
-   * STT의 중간 문장은 계속 수정된다. 실제 검색 큐에는 확정 문장만 한 번 추가하고,
-   * 중간 문장은 /search/preview로 별도 조회하여 임시로 하이라이트한다.
-   */
   const [previewResult, setPreviewResult] = useState<SearchResult | null>(null)
   const liveSeq = useRef(0)
   const liveGeneration = useRef(0)
@@ -101,7 +92,6 @@ function App() {
     setPreviewResult(null)
   }, [])
 
-  /* ---------- 뷰어 ---------- */
   const [highlight, setHighlight] = useState<{ blockId: string; entryId: string } | null>(null)
   const [showBlocks, setShowBlocks] = useState(false)
   const [autoFollow, setAutoFollow] = useState(true)
@@ -116,19 +106,22 @@ function App() {
     : null
   const highlightBlock = livePreviewBlock ?? committedHighlightBlock
 
-  /* ---------- 타임라인 ---------- */
   const [entries, setEntries] = useState<TimelineEntry[]>([])
   const seqOf = useRef(new Map<string, number>())
   const nextSeq = useRef(0)
   const lastAppliedSeq = useRef(0)
   const sttFinalAt = useRef(new Map<string, number>())
 
-  const resetTimeline = useCallback(() => {
-    liveGeneration.current++
-    liveQueue.current = []
+  const clearPendingLive = useCallback(() => {
     if (liveUpdateTimer.current !== null) clearTimeout(liveUpdateTimer.current)
     liveUpdateTimer.current = null
     pendingLiveUpdate.current = null
+  }, [])
+
+  const resetTimeline = useCallback(() => {
+    liveGeneration.current++
+    liveQueue.current = []
+    clearPendingLive()
     setLiveWords([])
     setEntries([])
     setHighlight(null)
@@ -136,9 +129,8 @@ function App() {
     seqOf.current.clear()
     sttFinalAt.current.clear()
     lastAppliedSeq.current = 0
-  }, [clearPreview])
+  }, [clearPreview, clearPendingLive])
 
-  /* ---------- 세션 (contracts.md §3.4) ---------- */
   const [sessionState, setSessionState] = useState<{
     key: string
     session: Session | null
@@ -162,7 +154,6 @@ function App() {
         .then((s) => {
           if (!cancelled) {
             setSessionState({ key: sessionKey, session: s, error: null })
-            setConfigBusy(false)
           }
         })
         .catch(
@@ -189,34 +180,27 @@ function App() {
     autoFollowRef.current = autoFollow
   }, [session, autoFollow])
 
-  /* ---------- 결과 반영 ---------- */
-
   const addEntry = useCallback(
     (id: string, text: string, source: EntrySource, segment_id: string | null) => {
       seqOf.current.set(id, ++nextSeq.current)
       setEntries((prev) => [
         ...prev,
         {
-          id,
-          segment_id,
-          text,
-          source,
-          createdAt: Date.now(),
-          pending: true,
-          result: null,
-          roundTripMs: null,
-          error: null,
+          id, segment_id, text, source, createdAt: Date.now(),
+          pending: true, result: null, roundTripMs: null, error: null,
         },
       ])
     },
     [],
   )
 
+  const updateEntry = useCallback((id: string, changes: Partial<TimelineEntry>) => {
+    setEntries((items) => items.map((entry) => entry.id === id ? { ...entry, ...changes } : entry))
+  }, [])
+
   const applyResult = useCallback(
     (id: string, result: SearchResult, roundTripMs: number | null) => {
-      setEntries((prev) =>
-        prev.map((e) => (e.id === id ? { ...e, pending: false, result, roundTripMs } : e)),
-      )
+      updateEntry(id, { pending: false, result, roundTripMs })
       // NONE 이면 기존 하이라이트 유지 (contracts.md §2.4)
       if (result.status !== 'MATCH' || result.block_id == null || result.page == null) return
       // 늦게 도착한 이전 발화의 결과가 최신 하이라이트를 덮어쓰지 않도록
@@ -226,10 +210,8 @@ function App() {
       setHighlight({ blockId: result.block_id, entryId: id })
       if (autoFollowRef.current) setPageNumber(result.page)
     },
-    [],
+    [updateEntry],
   )
-
-  /* ---------- 텍스트 탐색 (contracts.md §3.5) ---------- */
 
   const requestSeq = useRef(0)
   const runSearch = useCallback(
@@ -244,19 +226,11 @@ function App() {
         const result = await api.search({ session_id: current.session_id, text, segment_id: null })
         applyResult(id, result, Math.round(performance.now() - started))
       } catch (err) {
-        setEntries((prev) =>
-          prev.map((e) =>
-            e.id === id
-              ? { ...e, pending: false, error: errorMessage(err, '탐색 요청에 실패했습니다.') }
-              : e,
-          ),
-        )
+        updateEntry(id, { pending: false, error: errorMessage(err, '탐색 요청에 실패했습니다.') })
       }
     },
-    [addEntry, applyResult],
+    [addEntry, applyResult, updateEntry],
   )
-
-  /* ---------- STT ---------- */
 
   const [sttSource, setSttSource] = useState<SttSource>('browser')
   const streamUrl = sttSource === 'server' && session ? api.streamUrl(session.session_id) : null
@@ -355,9 +329,7 @@ function App() {
   const handleLiveUpdate = useCallback((text: string, isFinal: boolean, utteranceId: string) => {
     if (isFinal) {
       // 확정 직전의 타이머가 뒤늦게 실행되어 중복 반영하지 않도록 취소한다.
-      if (liveUpdateTimer.current !== null) clearTimeout(liveUpdateTimer.current)
-      liveUpdateTimer.current = null
-      pendingLiveUpdate.current = null
+      clearPendingLive()
       enqueueLive(text, true, utteranceId)
       return
     }
@@ -375,18 +347,14 @@ function App() {
       pendingLiveUpdate.current = null
       if (latest) enqueueLive(latest.text, false, latest.utteranceId)
     }, sttApplyMode === '1s' ? 1000 : 2000)
-  }, [enqueueLive, sttApplyMode])
+  }, [enqueueLive, sttApplyMode, clearPendingLive])
 
   useEffect(() => {
     // 갱신 모드 변경 시 기존 주기의 예약 작업은 버린다.
-    if (liveUpdateTimer.current !== null) clearTimeout(liveUpdateTimer.current)
-    liveUpdateTimer.current = null
-    pendingLiveUpdate.current = null
-  }, [sttApplyMode])
+    clearPendingLive()
+  }, [sttApplyMode, clearPendingLive])
 
-  useEffect(() => () => {
-    if (liveUpdateTimer.current !== null) clearTimeout(liveUpdateTimer.current)
-  }, [])
+  useEffect(() => clearPendingLive, [clearPendingLive])
 
   // 브라우저 STT: 매 중간 가설이 실제 큐/현재 페이지를 갱신한다.
   const browserStt = useSpeechRecognition({
@@ -412,8 +380,6 @@ function App() {
     setAppliedConfig({ ...sessionConfig })
     setConfigRevision((revision) => revision + 1)
   }
-
-  /* ---------- 문서 업로드 (contracts.md §3.1, §3.2) ---------- */
 
   async function handleFileSelect(file: File) {
     setDocumentBusy(true)
@@ -450,8 +416,6 @@ function App() {
       setDocumentBusy(false)
     }
   }
-
-  /* ---------- 타임라인 선택 ---------- */
 
   function handleSelectEntry(entry: TimelineEntry) {
     const r = entry.result

@@ -114,7 +114,12 @@ export function PdfViewer({
         }}>
         {!hasDocument ? (
           <div className="viewer-empty" role="status">
-            <span className="empty-document-icon" aria-hidden>▤</span>
+            <span className="empty-document-icon" aria-hidden>
+              <svg width="38" height="46" viewBox="0 0 38 46" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 3h13l9 9v27a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4Z" />
+                <path d="M22 3v10h9M12 23h14M12 29h14M12 35h8" />
+              </svg>
+            </span>
             <h2>{emptyMessage ?? '문서에서 시작하세요'}</h2>
             <p>문서 영역의 PDF 업로드로 파일을 열면<br />음성과 텍스트로 내용을 찾을 수 있습니다.</p>
           </div>

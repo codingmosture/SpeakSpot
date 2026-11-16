@@ -116,6 +116,7 @@ service-account*.json
 # Model checkpoints
 checkpoints/
 model_weights/
+backend/app/stt/.models/
 
 # ML cache
 .cache/

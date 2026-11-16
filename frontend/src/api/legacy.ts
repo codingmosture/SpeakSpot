@@ -6,6 +6,7 @@ import type {
   TimelineItem,
 } from '../types/contracts'
 import { ApiError, type SpeakSpotApi } from './types'
+import { API_ORIGIN, request as httpRequest } from './http'
 
 /*
  * backend 초안 API 어댑터 (임시).
@@ -14,13 +15,11 @@ import { ApiError, type SpeakSpotApi } from './types'
  *   POST /api/search       → { status, page, block_id, score, model }
  *
  * 초안 응답을 contracts.md v0.1 형식으로 변환해서, 프론트가 backend 초안과
- * 바로 연동 테스트를 할 수 있게 한다. backend 가 /api/v1 을 구현하면
- * VITE_API_MODE=server 로 바꾸고 이 파일은 삭제한다.
+ * 연동할 수 있게 한다. 기본 server 모드와 별도로 호환 모드를 유지한다.
  *
  * 초안에 없는 기능(업로드, 세션, 타임라인)은 프론트에서 흉내 낸다.
  */
 
-const API_ORIGIN = import.meta.env.VITE_API_ORIGIN ?? ''
 const LEGACY_DOCUMENT_ID = 'doc_001'
 
 interface LegacyBlock {
@@ -52,19 +51,8 @@ let segmentSeq = 0
 let docSeq = 0
 let blocksCache: Promise<Block[]> | null = null
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  let response: Response
-  try {
-    response = await fetch(`${API_ORIGIN}${path}`, {
-      ...init,
-      headers: { 'Content-Type': 'application/json', ...init.headers },
-    })
-  } catch {
-    throw new ApiError('서버에 연결할 수 없습니다.')
-  }
-  if (!response.ok) throw new ApiError(`${path} 요청 실패 (${response.status})`, response.status)
-  return (await response.json()) as T
-}
+const request = <T>(path: string, init: RequestInit = {}) =>
+  httpRequest<T>(`${API_ORIGIN}${path}`, init, null)
 
 /** 초안 Block → 명세 Block (block_type / rects / keywords 채움) */
 function toBlock(b: LegacyBlock): Block {

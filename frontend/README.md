@@ -1,121 +1,44 @@
 # SpeakSpot Frontend
 
-React + TypeScript + Vite. API·데이터 형식은 [`docs/contracts.md`](../docs/contracts.md) (v0.1)를 따릅니다.
+React + TypeScript + Vite. 설치·전체 실행은 [루트 README](../README.md)에 있습니다.
 
-## 실행
-
-```bash
+```sh
 pnpm install
-pnpm dev        # http://localhost:5173
-pnpm build      # 타입 체크 + 프로덕션 빌드
+pnpm dev      # localhost:5173
+pnpm build    # 타입 확인 + 배포 빌드
 pnpm lint
+pnpm test
+pnpm preview
 ```
 
-### API 모드 (`VITE_API_MODE`)
+## 설정
 
-| 모드 | 설명 |
-|---|---|
-| `mock` (개발 기본값) | 백엔드 없이 프론트 내장 Mock API 사용 (contracts.md §7). 샘플 3페이지 문서로 시작 |
-| `legacy` | backend 초안 API(`/api/mock/blocks`, `/api/search`)를 호출하고 응답을 contracts.md 형식으로 변환. backend 를 같이 띄워 연동 테스트할 때 사용 |
-| `server` (배포 기본값) | backend `/api/v1` 사용 (업로드·세션·WebSocket STT). backend 가 명세를 구현하면 이 모드로 전환 |
+`.env.example`을 `.env.development.local`로 복사한 뒤 필요할 때만 수정합니다.
 
-`legacy`/`server` 모드는 Vite 프록시가 `/api` (WebSocket 포함)를 `127.0.0.1:8000` 으로 전달합니다.
-기본값은 `pnpm dev` 이면 `mock`, `pnpm build` 이면 `server` 이며 env 파일이 없어도 동작합니다.
-바꾸려면 `.env.example` 을 복사해 `.env.development.local` 로 저장하고 값을 수정한 뒤 다시 실행하세요.
-(루트 `.gitignore` 규칙에 따라 `.env.*` 파일은 git 에 올라가지 않고, `.env.example` 만 올라갑니다.)
+| 환경변수 | 기본값 | 설명 |
+|---|---|---|
+| `VITE_API_MODE` | `server` | 실제 API. `mock`은 샘플, `legacy`는 초안 API 호환 |
+| `VITE_API_ORIGIN` | 같은 주소 | 미지정 시 Vite가 `/api` HTTP/WS를 `127.0.0.1:8000`으로 전달 |
+| `VITE_DEV_TOOLS` | 개발 `true`, 배포 `false` | 개발자 메뉴 노출 |
 
-```bash
-# frontend/.env.development.local
-VITE_API_MODE=legacy
-```
+초기 입력은 브라우저 한국어 STT입니다. 서버 STT는 개발자 메뉴에서 선택하며 기본 모델은
+Faster-Whisper tiny입니다. 세션 설정은 `src/config.ts`, 통신 형식은 [계약](../docs/contracts.md)을 따릅니다.
+설정 적용 시 새 세션이 생기고 큐와 이력은 초기화됩니다. PDF는 유지합니다.
 
-### 개발 도구 (`VITE_DEV_TOOLS`)
+## 코드
 
-`pnpm dev` 에서는 기본으로 켜져 있어 화면 오른쪽 아래에 **개발 도구** 칸이 보입니다.
-- STT 소스 선택: 서버 STT (WebSocket) / 브라우저 STT (Web Speech API, 테스트용)
-- 블록 경계 표시: 블록 위치와 `block_id` 확인
+- `App.tsx`: 문서·검색 세션·실시간 발화 큐·결과 연결
+- `components/AppHeader.tsx`: 브랜드·상태·개발자 버튼·녹음 도구
+- `components/ControlPanel.tsx`: 텍스트 검색·자동 이동·PDF 업로드
+- `components/Timeline.tsx`: 발화 이력·최근 결과와 측정값
+- `components/PdfViewer.tsx`, `DeveloperPanel.tsx`: PDF 렌더링/하이라이트, 전체 개발 설정
+- `hooks/`: 서버 PCM/WebSocket과 브라우저 음성 인식
+- `api/`: server·mock·legacy. HTTP 전송과 오류 처리는 `http.ts` 재사용
+- `index.css`: 반투명 유리·빛 반사·부드러운 음영. 작은 화면과 모션 감소 설정 지원
 
-실제 사용자 화면을 보려면 `.env.development.local` 에 `VITE_DEV_TOOLS=false` 를 넣고 다시 실행하세요.
-배포용 빌드(`pnpm build`)에서는 기본으로 꺼집니다.
-STT 소스 기본값은 `server` 모드에서 서버 STT, 그 외 모드에서 브라우저 STT 입니다.
+브라우저 중간 발화는 `/search/live`에서 최신 가설로 교체하고, 확정 이벤트는 한 번만 반영합니다.
+실시간·1초·2초·문장 단위 반영을 선택할 수 있습니다. 서버 STT는 PCM WebSocket에서
+확정 발화와 `highlight.update`를 받습니다. `NONE`이면 이전 하이라이트를 유지합니다.
 
-> `legacy` 모드 제약: 초안에는 업로드·세션·STT 스트리밍이 없어 프론트에서 흉내 냅니다.
-> `stage_used` 는 선택한 전략으로 추정하고, `processing_ms` 는 왕복 시간으로 대신합니다.
-> v1 이 완성되면 `src/api/legacy.ts` 를 삭제하세요.
-
-## 동작 흐름
-
-1. **PDF 업로드** → `POST /api/v1/documents` → `GET /documents/{id}/blocks`
-   - 화면 렌더링은 업로드한 로컬 파일을 pdf.js 로 그림 (프론트는 PDF 파싱을 하지 않음)
-2. **세션 생성** → `POST /api/v1/sessions` (문서가 바뀌면 새 세션, 설정은 `config.ts` 고정값 — 사용자가 모델·전략을 고르지 않음)
-3. **탐색**
-   - 서버 STT: `WS /api/v1/sessions/{id}/stream` 으로 16 kHz mono PCM s16le 전송 → `stt.result`, `highlight.update` 수신
-   - 브라우저 STT (테스트용, Chrome/Edge): Web Speech API 확정 문장을 `POST /api/v1/search` 로 전송
-   - 텍스트로 찾기 (사용자 기능): `POST /api/v1/search`
-4. **하이라이트**: `MATCH` 이면 `block_id` 의 `rects` 를 강조하고 해당 페이지로 이동. `NONE` 이면 이전 하이라이트 유지
-
-## 구조
-
-```text
-src/
-├── types/contracts.ts        # contracts.md 의 공통 타입
-├── api/
-│   ├── client.ts             # VITE_API_MODE 에 따라 api 구현 선택
-│   ├── http.ts               # 실제 백엔드 구현
-│   ├── legacy.ts             # backend 초안 API 어댑터 (임시)
-│   ├── mock.ts, mockData.ts  # Mock 구현 + 샘플 블록
-│   └── types.ts              # SpeakSpotApi 인터페이스, ApiError
-├── hooks/
-│   ├── useServerStt.ts       # WebSocket 스트리밍 STT
-│   └── useSpeechRecognition.ts  # 브라우저 STT
-├── lib/
-│   ├── pcmWorklet.ts         # 마이크 → 16 kHz PCM 변환 AudioWorklet
-│   ├── pdf.ts                # pdf.js 로더 (지연 로드)
-│   └── bbox.ts               # 정규화 좌표 → CSS
-├── components/               # PdfViewer, ControlPanel, ResultCard, Timeline, AppHeader
-├── config.ts                 # 세션 고정 설정 (모델·전략)
-└── App.tsx                   # 상태 관리 및 흐름 연결
-```
-
-## 참고
-
-- `config.ts` 의 모델 이름은 contracts.md 예시값입니다. 실험으로 최종 STT·탐색 모델 조합이 정해지면 갱신하세요.
-- Mock 탐색은 테스트용 문자 bigram 매칭이며 실제 탐색 모델과 무관합니다.
-- OneDrive 폴더에서 빌드가 아무 메시지 없이 멈추면 `dist/` 를 지우고 다시 빌드하세요.
-
-# SpeakSpot 통합 실행
-
-기본 프론트엔드 모드는 **server**입니다. `mock`은 프론트만 시험할 때 명시적으로 선택합니다.
-
-1. 백엔드(`backend/`): `python -m pip install -r requirements-integrated.txt` 후 `python -m uvicorn app.main:app --reload`
-2. 프론트(`frontend/`): `pnpm install` 후 `pnpm dev`
-3. http://localhost:5173 에서 PDF를 업로드하면 자동으로 블록을 등록하고 검색 세션을 생성합니다.
-4. 텍스트 입력 → 검색, 마이크 → STT → 검색 → PDF 하이라이트를 확인할 수 있습니다.
-
-기본값은 검색 Sliding Queue(모델 없음, ±5페이지), STT Faster-Whisper tiny입니다. Whisper 첫 다운로드에는 시간이 걸릴 수 있으며 인터넷이 필요합니다. CPU 성능에 따라 처리시간이 길어질 수 있습니다. 클라우드 STT는 서버 측 인증이 별도로 필요합니다.
-
-프론트 단독 실행은 `VITE_API_MODE=mock` 설정을 사용합니다.
-
-개별 STT 테스트 서버 `app.api.stt_app:app`도 계속 유지됩니다. 실제 통합 API는 `app.main:app`에 연결되어 있습니다.
-
-### 한국어 STT 테스트
-
-실시간 음성 인식 기본 입력은 브라우저 STT(Chrome/Edge, `ko-KR`)입니다. 로컬 STT가 한국어를 부정확하게 인식하거나 CPU 처리 지연으로 `BACKPRESSURE`를 낼 때, 프론트의 **개발 도구 → STT 소스 → 브라우저 STT**를 사용하면 음성 인식 결과를 HTTP 검색 API로 전달합니다. 브라우저 음성 인식은 브라우저/네트워크 지원 여부에 따라 사용할 수 없거나 정확도가 달라질 수 있습니다.
-
-로컬 Faster-Whisper를 비교하려면 개발 도구에서 **서버 STT**를 선택하세요. Whisper 모델은 `frontend/src/config.ts`의 `stt_model` 설정에서 선택하지만, `base`/`small`처럼 큰 모델은 CPU 환경에서 백프레셔를 더 쉽게 일으킬 수 있습니다.
-
-### 실시간 단어 큐와 개발자 메뉴
-
-기본값은 브라우저 한국어 STT + `sliding_queue`(15단어, 현재 페이지 ±5)입니다.
-브라우저가 **중간 인식 결과**를 보내는 즉시 `POST /api/v1/search/live`를 호출합니다.
-이 API는 미확정 문장을 매번 **교체**하며 실제 큐와 현재 페이지를 갱신합니다.
-확정된 문장은 큐에 한 번만 반영하고 타임라인에 기록합니다. 문장 종료를 기다리지 않아도
-PDF 하이라이트가 이동합니다. 브라우저 자체가 중간 인식 결과를 보내기 전까지의 지연은 남습니다.
-
-오른쪽 **개발자 메뉴 · 검색 / STT 설정**을 펼치면 알고리즘
-(Sliding Queue, Local, Global, Hybrid1/2), 모델(E5-small, BGE-M3, Jev),
-브라우저/서버 STT, 서버 Whisper 모델, 단어 큐 길이, 페이지 반경,
-점수·이동 가중치, STT 버퍼/간격을 조정할 수 있습니다.
-**설정 적용 · 세션 다시 시작**을 누르면 새 세션이 생성되므로 현재 큐와 타임라인이 초기화됩니다.
-AI 모델을 선택하면 첫 모델 다운로드/인덱싱에 시간이 걸릴 수 있습니다.
-서버 STT는 기존 스트리밍 방식이므로 중간 가설을 실시간 큐에 넣는 경로와는 별도입니다.
+PDF의 실제 종이는 불투명 흰색으로 유지해 읽기와 좌표 강조에 영향을 주지 않습니다.
+리퀴드 글래스는 주변 패널·도구·배경·설정 창에 적용합니다. 추가 UI 패키지나 외부 이미지 요청은 없습니다.

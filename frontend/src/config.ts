@@ -6,7 +6,7 @@ import type { SessionConfig } from './types/contracts'
  * 기본값은 슬라이딩 큐이며 개발자 메뉴에서 실험 설정을 변경할 수 있다.
  * - 기본 탐색: 최근 15개 단어를 사용하는 슬라이딩 큐, 현재 페이지 ±5페이지만 검색.
  * - 슬라이딩 큐는 임베딩 모델을 사용하지 않으므로 search_model은 null이다.
- * - STT 모델은 현재 faster-whisper tiny로 고정하며, 필요 시 변경한다.
+ * - 서버 STT 기본 모델은 faster-whisper tiny이며 개발자 메뉴에서 변경할 수 있다.
  */
 export const DEFAULT_SESSION_CONFIG: SessionConfig = {
   stt_model: 'faster-whisper-tiny',

@@ -7,9 +7,6 @@ from kiwipiepy import Kiwi
 from app.schemas.models import Block, BBox
 from app.documents.ocr import OCRConfig, extract_page_text
 
-# ---------------------------------------------------------------------------
-# 전역
-# ---------------------------------------------------------------------------
 
 # 형태소 분석기 초기화 및 Warm-up
 kiwi = Kiwi()
@@ -21,15 +18,13 @@ BlockType = Literal[
 ]
 
 # 수식용 중괄호 등 특수 유니코드 범위
+BULLET_RE = re.compile('^([•●○▪▫◆◇▶▷\\-*]|(\\d+|\\([0-9a-zA-Z가-힣]+\\))[\\.\\)])\\s*')
 BROKEN_MATH_CHARS_RE = re.compile(r"[\uf000-\uf8ff\u239b-\u23b3]")
 
 class PDFParser:
     def __init__(self, ocr_config: OCRConfig | None = None):
         self.ocr_config = ocr_config if ocr_config is not None else OCRConfig.from_env()
 
-    # -----------------------------------------------------------------------
-    # 메인 파싱 함수: PDF 열기 -> 텍스트/좌표 추출 -> 블록 분류 -> 키워드 채우기
-    # -----------------------------------------------------------------------
     def parse(self, file_path: str) -> tuple[int, list[Block]]:
         doc = fitz.open(file_path)
 
@@ -69,8 +64,7 @@ class PDFParser:
                     if lines:
                         block["lines"] = lines
                         if not block.get("_ocr_image"):
-                            block["bbox"] = (min(l["bbox"][0] for l in lines), min(l["bbox"][1] for l in lines),
-                                             max(l["bbox"][2] for l in lines), max(l["bbox"][3] for l in lines))
+                            block["bbox"] = self._bounds(lines)
                         filtered_blocks.append(block)
                 raw_text_blocks_initial = filtered_blocks
 
@@ -103,18 +97,16 @@ class PDFParser:
 
                     if is_in_table:
                         # 표 안의 글자는 칸(줄) 단위로 분리
-                        for line in b.get("lines", []):
-                            raw_text_blocks.append({
-                                "bbox": line["bbox"],
-                                "lines": [line]
-                            })
+                        raw_text_blocks.extend(
+                            {"bbox": line["bbox"], "lines": [line]} for line in b.get("lines", [])
+                        )
                     else:
                         # 표 밖이라도 불릿 단위로 분리
                         lines = b.get("lines", [])
                         bullet_indices = []
                         for i, line in enumerate(lines):
                             l_text = "".join([s.get("text", "") for s in line.get("spans", [])]).strip()
-                            if re.match(r"^([•●○▪▫◆◇▶▷\-*]|(\d+|\([0-9a-zA-Z가-힣]+\))[\.\)])\s*", l_text):
+                            if BULLET_RE.match(l_text):
                                 bullet_indices.append(i)
 
                         # 한 블록 안에 불릿 시작 줄이 2개 이상 존재하면 독립된 블록으로 분할
@@ -124,36 +116,20 @@ class PDFParser:
                                 end_idx = bullet_indices[i + 1] if i + 1 < len(bullet_indices) else len(lines)
                                 sub_lines = lines[start_idx:end_idx]
                                 if sub_lines:
-                                    x0 = min(l["bbox"][0] for l in sub_lines)
-                                    y0 = min(l["bbox"][1] for l in sub_lines)
-                                    x1 = max(l["bbox"][2] for l in sub_lines)
-                                    y1 = max(l["bbox"][3] for l in sub_lines)
-                                    raw_text_blocks.append({
-                                        "bbox": (x0, y0, x1, y1),
-                                        "lines": sub_lines
-                                    })
+                                    raw_text_blocks.append({"bbox": self._bounds(sub_lines), "lines": sub_lines})
                         else:
                             raw_text_blocks.append(b)
-                            
+
                 # y0 좌표, x0 좌표 기준으로 블록 순서 정렬
                 raw_text_blocks.sort(key=lambda b: (round(b["bbox"][1], 1), b["bbox"][0]))
-                
-                # 페이지 기준 폰트 크기(중앙값 및 최대값) 계산
-                font_sizes: list[float] = []
-                for b in raw_text_blocks:
-                    for line in b.get("lines", []):
-                        for span in line.get("spans", []):
-                            txt = span.get("text", "").strip()
-                            if len(txt) >= 2 and span.get("size"):
-                                font_sizes.append(span["size"])
 
-                if font_sizes:
-                    font_sizes.sort()
-                    base_font_size = font_sizes[len(font_sizes) // 2]
-                    max_page_font_size = font_sizes[-1]
-                else:
-                    base_font_size = 11.0
-                    max_page_font_size = 18.0
+                # 페이지 기준 폰트 크기(중앙값 및 최대값) 계산
+                font_sizes = sorted(
+                    span["size"] for block in raw_text_blocks for line in block.get("lines", [])
+                    for span in line.get("spans", []) if len(span.get("text", "").strip()) >= 2 and span.get("size")
+                )
+                base_font_size = font_sizes[len(font_sizes) // 2] if font_sizes else 11.0
+                max_page_font_size = font_sizes[-1] if font_sizes else 18.0
 
                 block_seq = 1
 
@@ -248,9 +224,6 @@ class PDFParser:
         return (margin and typical_position and (x1 - x0) / width <= 0.2
                 and (y1 - y0) / height <= 0.06)
 
-    # -----------------------------------------------------------------------
-    # 7종 블록 타입 분류 함수
-    # -----------------------------------------------------------------------
     def _classify_block_type(
         self,
         text: str,
@@ -284,12 +257,9 @@ class PDFParser:
         # 4. other (쪽번호, 작은 머리글, 코드 폰트)
         if (norm_bbox[1] > 0.90 or norm_bbox[3] < 0.08) and len(stripped) < 20:
             return "other"
-        # code_fonts = ("consolas", "courier", "menlo", "monaco", "d2coding", "monospace")
-        # if any(cf in f.lower() for f in fonts for cf in code_fonts):
-        #   return "other"
 
         # 5. bullet (글머리 기호)
-        if re.match(r"^([•●○▪▫◆◇▶▷\-*]|(\d+|\([0-9a-zA-Z가-힣]+\))[\.\)])\s*", stripped):
+        if BULLET_RE.match(stripped):
             return "bullet"
 
         # 6. equation
@@ -304,9 +274,6 @@ class PDFParser:
         # 7. paragraph
         return "paragraph"
 
-    # -----------------------------------------------------------------------
-    # 표 영역 감지 함수
-    # -----------------------------------------------------------------------
     def _detect_tables_fast(
         self,
         page: fitz.Page,
@@ -383,65 +350,39 @@ class PDFParser:
                         table_bboxes.append(candidate_bbox)
 
         return table_bboxes
-    
+
     # 표 내부인지 확인
     def _is_inside_table(self, block_bbox: BBox, table_bbox: BBox) -> bool:
         cx = (block_bbox[0] + block_bbox[2]) / 2
         cy = (block_bbox[1] + block_bbox[3]) / 2
         return (table_bbox[0] <= cx <= table_bbox[2]) and (table_bbox[1] <= cy <= table_bbox[3])
 
-    # -----------------------------------------------------------------------
-    # Kiwi 형태소 분석 + TF-IDF 기반 핵심 키워드 추출 함수
-    # -----------------------------------------------------------------------
+    @staticmethod
+    def _bounds(lines: list[dict]) -> tuple[float, float, float, float]:
+        return tuple(fn(line["bbox"][i] for line in lines) for i, fn in enumerate((min, min, max, max)))
+
     def _populate_keywords(self, blocks: list[Block], total_pages: int, top_k: int = 5) -> None:
-        block_words_list: list[list[str]] = []
-        page_word_sets: dict[int, set[str]] = {p: set() for p in range(1, total_pages + 1)}         # 단어 기록
-        page_word_counts: dict[int, Counter] = {p: Counter() for p in range(1, total_pages + 1)}    # 빈도 기록
+        """Keep the existing Kiwi/page TF-IDF weights and stable tie ordering."""
+        words_by_block = []
+        for tokens in kiwi.tokenize([block.text for block in blocks]):
+            words = [token.form.lower() if token.tag == "SL" else token.form
+                     for token in tokens if token.tag in {"NNG", "NNP", "SL"}]
+            words_by_block.append([word for word in words if len(word) > 1])
+        page_counts = {page: Counter() for page in range(1, total_pages + 1)}
+        for block, words in zip(blocks, words_by_block):
+            page_counts[block.page].update(words)
+        document_frequency = Counter(word for counts in page_counts.values() for word in counts)
+        for block, words in zip(blocks, words_by_block):
+            counts, frequency = page_counts[block.page], Counter(words)
+            total = sum(counts.values()) or 1
+            scores = {
+                word: counts[word] / total * (1 + 0.2 * occurrences)
+                * (math.log((total_pages + 1) / (document_frequency[word] + 1)) + 1.0)
+                for word, occurrences in frequency.items()
+            }
+            if words:
+                block.keywords = sorted(scores, key=scores.get, reverse=True)[:top_k]
 
-        texts = [b.text for b in blocks]
-        token_lists = kiwi.tokenize(texts)
-
-        # 형태소 분석 결과에서 명사, 영단어만
-        for block, tokens in zip(blocks, token_lists):
-            words = []
-            for t in tokens:
-                if t.tag in ("NNG", "NNP", "SL"):   # NNG: 일반명사, NNP: 고유명사, SL: 외국어
-                    word = t.form.lower() if t.tag == "SL" else t.form
-                    if len(word) > 1:   # 1글자짜리 무의미한 단어
-                        words.append(word)
-            
-            block_words_list.append(words)
-            page_word_sets[block.page].update(words)
-            page_word_counts[block.page].update(words)
-
-        # 전체 페이지 기준 등장 빈도 계산
-        df_counts: Counter = Counter()
-        for word_set in page_word_sets.values():
-            for word in word_set:
-                df_counts[word] += 1
-
-        # 블록별 TF-IDF 점수 계산
-        for block, words in zip(blocks, block_words_list):
-            if not words:
-                continue
-
-            p_counts = page_word_counts[block.page]
-            total_words_in_page = sum(p_counts.values()) or 1
-            unique_words = list(dict.fromkeys(words))
-            scored_words: list[tuple[str, float]] = []
-
-            for w in unique_words:
-                tf = (p_counts[w] / total_words_in_page) * (1 + 0.2 * words.count(w))
-                idf = math.log((total_pages + 1) / (df_counts[w] + 1)) + 1.0
-                scored_words.append((w, tf * idf))
-
-            # TF-IDF 점수가 높은 것부터 정렬후 상위 top k개(기본 5개) 단어 저장
-            scored_words.sort(key=lambda x: x[1], reverse=True)
-            block.keywords = [w for w, score in scored_words[:top_k]]
-
-    # -----------------------------------------------------------------------
-    # 좌표 0-1 정규화 보조 함수
-    # -----------------------------------------------------------------------
     def _normalize_bbox(
         self,
         bbox: tuple[float, float, float, float],

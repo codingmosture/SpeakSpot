@@ -1,7 +1,7 @@
 import type { ErrorBody } from '../types/contracts'
 import { ApiError, type SpeakSpotApi } from './types'
 
-const API_ORIGIN = import.meta.env.VITE_API_ORIGIN ?? ''
+export const API_ORIGIN = import.meta.env.VITE_API_ORIGIN ?? ''
 const V1 = `${API_ORIGIN}/api/v1`
 const DEFAULT_TIMEOUT_MS = 15_000
 
@@ -14,13 +14,13 @@ function isErrorBody(value: unknown): value is ErrorBody {
   )
 }
 
-async function request<T>(
+export async function request<T>(
   url: string,
   init: RequestInit = {},
-  timeoutMs = DEFAULT_TIMEOUT_MS,
+  timeoutMs: number | null = DEFAULT_TIMEOUT_MS,
 ): Promise<T> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const timer = timeoutMs == null ? null : setTimeout(() => controller.abort(), timeoutMs)
   const isForm = init.body instanceof FormData
 
   let response: Response
@@ -36,7 +36,7 @@ async function request<T>(
     }
     throw new ApiError('서버에 연결할 수 없습니다.')
   } finally {
-    clearTimeout(timer)
+    if (timer !== null) clearTimeout(timer)
   }
 
   const body: unknown = await response.json().catch(() => null)

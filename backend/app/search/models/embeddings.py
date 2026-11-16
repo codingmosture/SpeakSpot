@@ -24,7 +24,7 @@ def _load_encoder(model_id: str, device: str | None):
     except ImportError as exc:
         raise ModelUnavailableError(
             '임베딩 모델에 sentence-transformers가 필요합니다. '
-            'python -m pip install -r requirements-search.txt'
+            'python -m pip install -r requirements.txt'
         ) from exc
     try:
         return SentenceTransformer(model_id, device=device)

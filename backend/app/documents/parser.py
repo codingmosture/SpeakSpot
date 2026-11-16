@@ -6,6 +6,10 @@ import pymupdf as fitz
 from kiwipiepy import Kiwi
 from app.schemas.models import Block, BBox
 from app.documents.ocr import OCRConfig, extract_page_text
+from app.documents.grouping import BlockStyle, SemanticGroup, group_blocks
+from app.documents.layout import extract_layout_boxes, region_for_bbox
+from app.documents.adapter import groups_to_blocks
+from app.documents.wrapping import TextLine, prepare_wraps
 
 
 # 형태소 분석기 초기화 및 Warm-up
@@ -26,6 +30,22 @@ class PDFParser:
         self.ocr_config = ocr_config if ocr_config is not None else OCRConfig.from_env()
 
     def parse(self, file_path: str) -> tuple[int, list[Block]]:
+        """Default search/highlight units, using the unchanged public Block schema."""
+        page_count, sources, groups = self.parse_with_groups(file_path)
+        return page_count, groups_to_blocks(sources, groups)
+
+    def parse_raw(self, file_path: str) -> tuple[int, list[Block]]:
+        """Original extraction for comparison; no semantic grouping or projection."""
+        return self._parse(file_path)
+
+    def parse_with_groups(self, file_path: str) -> tuple[int, list[Block], list[SemanticGroup]]:
+        """Return source blocks plus separate semantic units without changing parse/API."""
+        styles: dict[str, BlockStyle] = {}
+        page_count, blocks = self._parse(file_path, styles)
+        styles = prepare_wraps(blocks, styles, kiwi.tokenize)
+        return page_count, blocks, group_blocks(blocks, styles)
+
+    def _parse(self, file_path: str, styles: dict[str, BlockStyle] | None = None) -> tuple[int, list[Block]]:
         doc = fitz.open(file_path)
 
         try:
@@ -132,6 +152,7 @@ class PDFParser:
                 max_page_font_size = font_sizes[-1] if font_sizes else 18.0
 
                 block_seq = 1
+                layout_boxes = extract_layout_boxes(page) if styles is not None else []
 
                 # 개별 블록 생성 및 7종 분류
                 for b in raw_text_blocks:
@@ -182,6 +203,33 @@ class PDFParser:
                     # 블록 ID 생성
                     block_id = f"p{page_num:04d}_b{block_seq:04d}"
                     block_seq += 1
+
+                    if styles is not None:
+                        text_lines = []
+                        for line in lines:
+                            content = [s for s in line.get("spans", []) if s.get("text", "").strip()]
+                            box = self._normalize_bbox(line["bbox"], width, height)
+                            if content and box:
+                                tail = content[-1]
+                                text_lines.append(TextLine(
+                                    BROKEN_MATH_CHARS_RE.sub("", "".join(s.get("text", "") for s in line.get("spans", []))),
+                                    box, tail.get("size", 0), tail.get("font", ""),
+                                    bool(tail.get("flags", 0) & 16 or "bold" in tail.get("font", "").lower()),
+                                ))
+                        spans = [s for line in lines for s in line.get("spans", []) if s.get("text", "").strip()]
+                        total_chars = sum(len(s.get("text", "")) for s in spans) or 1
+                        bold_chars = sum(len(s.get("text", "")) for s in spans
+                                         if s.get("flags", 0) & 16 or "bold" in s.get("font", "").lower())
+                        styles[block_id] = BlockStyle(
+                            font_size=max_block_font, bold=bold_chars / total_chars >= 0.6,
+                            horizontal=page.rotation == 0 and all(
+                                abs(line.get("dir", (1, 0))[1]) < 0.1 for line in lines),
+                            region_id=region_for_bbox(norm_bbox, layout_boxes),
+                            lines=tuple(text_lines),
+                            lead_bold=bool(spans and any(
+                                (s.get("flags", 0) & 16 or "bold" in s.get("font", "").lower())
+                                for s in spans[:2] if re.search(r"\w", s.get("text", "")))),
+                        )
 
                     blocks.append(
                         Block(

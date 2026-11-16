@@ -1,5 +1,74 @@
 # PDF 이미지 텍스트 OCR
 
+## 기본 전처리: 의미 그룹 기반 Block
+
+백엔드 의존성이 설치된 환경에서 `backend` 폴더를 기준으로 사용합니다.
+
+```python
+from app.documents.parser import PDFParser
+
+parser = PDFParser()
+page_count, blocks = parser.parse("lecture.pdf")
+```
+
+| 메서드 | 반환값 | 용도 |
+| --- | --- | --- |
+| `parse(path)` | `(page_count, blocks)` | 기본 처리. 의미 그룹 기반 `Block` 목록 반환 |
+| `parse_raw(path)` | `(page_count, source_blocks)` | 그룹화 이전의 원본 추출 결과 확인·비교 |
+| `parse_with_groups(path)` | `(page_count, source_blocks, groups)` | 원본 블록과 의미 그룹·관계 정보 확인 |
+
+### 그룹화와 기존 Block 인터페이스
+
+들여쓰기, 불릿, 서체, 간격과 공간 경계를 이용해 소주제와 설명을 연결합니다.
+열 구분 근거가 명확할 때만 열별 읽기 순서를 적용하고, 박스·도식의 개별 필드
+경계를 넘어 병합하지 않도록 제한합니다. 제목·표·그림·캡션·수식은 독립적으로
+유지합니다. 관계가 불확실하면 관계를 비워 두거나 블록을 분리합니다.
+그룹화에는 외부 AI를 사용하지 않으며, 키워드 추출에는 Kiwi를 사용합니다.
+
+`parse()`는 기존 `(page_count, list[Block])` 반환 형식과 Block 필드를 유지합니다.
+기존 호출부 변경 없이 저장·검색 등록·블록 조회에 사용할 수 있으며, 원본 객체를
+수정하지 않고 다음 규칙으로 새 Block을 생성합니다.
+
+- 단일 원본 그룹은 원본 ID, 텍스트, 유형, bbox, rects, keywords를 유지합니다.
+- 병합 그룹은 `group_id`를 `block_id`로 사용하고 유형은 `paragraph`로 설정합니다.
+  텍스트·bbox는 그룹 값이며, rects는 원본 영역을 순서대로 연결합니다.
+  keywords는 원본 순서를 유지하면서 중복 제거합니다.
+
+`parse_with_groups()`의 `source_block_ids`로 원본 블록을 추적할 수 있습니다.
+`parent_group_id`는 부모 그룹, `supplements_group_ids`는 주석이 보충하는 그룹들을
+참조하며, 관계가 없으면 각각 `None`, `()`입니다. 이 정보는 기존 Block JSON에
+추가하지 않으며 기존 검색에서 직접 해석하지 않습니다.
+
+하이라이트는 반환된 ID로 Block을 찾아 전체 rects를 강조합니다. 블록 수·ID·본문과
+키워드가 달라지므로 **검색 결과·순위·점수와 강조 범위가 달라질 수 있습니다.**
+변경된 전처리를 기존 문서에 적용하려면 다시 업로드하고 새 검색 세션을 생성해야
+합니다. 원본 방식과의 비교에는 `parse_raw()`를 사용합니다.
+
+### 의미 그룹화 테스트
+
+`backend` 폴더에서 실행합니다.
+
+```sh
+python -m pytest tests/test_documents_grouping.py tests/test_documents_layout.py tests/test_documents_adapter.py -q
+```
+
+로컬 참조 PDF가 필요한 테스트는 자료가 없으면 건너뜁니다. 어댑터 테스트는
+로컬 TestClient와 외부 모델 없는 검색으로 업로드·ID 조회·rects 연결을 확인합니다.
+브라우저의 실제 렌더링은 별도 통합 검증 대상입니다.
+
+### 의미 그룹화의 알려진 한계
+
+- 서체·목록 표기·배치에 따라 오병합이나 설명 연결 누락이 발생할 수 있습니다.
+  공간 분할이 없는 번호 목록은 독립 항목이 같은 그룹으로 묶일 수 있습니다.
+- 복잡한 다단·불규칙한 박스, 도형 없는 도식, 이미지 속 경계, 회전·세로쓰기는
+  충분히 복원하지 못할 수 있으며 일부 영역은 보수적으로 분리합니다.
+- 원본 텍스트의 한글 공백 손실, 파싱 단계에서 이미 합쳐진 라벨, 표 셀 내부
+  줄바꿈과 코드의 문법적 단위는 완전히 복원하지 않습니다.
+
+회귀 테스트 통과는 모든 PDF의 의미 그룹 정확도를 보장하지 않습니다.
+
+## OCR 처리
+
 기존 PDF 텍스트를 먼저 추출하고, 표시된 이미지 영역을 각각 잘라
 PyMuPDF의 로컬 Tesseract OCR을 적용합니다. 기본 언어는 한국어+영어입니다.
 텍스트와 이미지가 섞인 페이지에서는 기존 텍스트를 보존하며 이미지 글자를 추가합니다.

@@ -1,16 +1,20 @@
 """Sliding Queue 검색 알고리즘.
 
-- 최근 N개 단어만 점수에 반영 (시간에 따른 누적 점수 없음)
+- 최근 N개 단어만 점수에 반영; 추가/삭제/반복 횟수 변화만 집계 갱신
 - 현재 페이지 ±R 범위의 PDF 블록만 탐색
-- 큐의 원문 단어는 보존, 비교 시 한국어 형태소·SQL 발음 표기를 정규화
+- 큐와 비교에는 일반명사·고유명사·영문 용어만 사용
+- E5 선택 시 개별 단어 유사도로 일치 판정을 보완 (문장 랭킹은 사용하지 않음)
 - 최신 발화를 우선하고 페이지 문맥과 블록 일치를 함께 비교
 - 현재 페이지 유지 보너스 / 과거 페이지 감점 / 최소 점수로 오이동 억제
 - 찾지 못했으면 NONE (현재 페이지는 그대로)
 """
-from collections import Counter, deque
+from collections import Counter, OrderedDict, deque
+from dataclasses import dataclass
 from math import log, sqrt
 import re
 from typing import Sequence
+
+import numpy as np
 
 from app.schemas.models import Block
 from app.search.algorithms.base import AlgorithmResult, SearchAlgorithm
@@ -23,14 +27,32 @@ _REFERENCE = re.compile(r'후반부|나중에|이따가|앞에서|앞서|지난\
 _GENERIC_TRANSITIONS = frozenset({'값', '표현', '여부'})
 
 
+@dataclass(frozen=True, slots=True)
+class _TermMatch:
+    words: frozenset[str]
+    idf: float
+    hits: np.ndarray
+    prefixes: np.ndarray
+
+
+@dataclass(slots=True)
+class _QueryScores:
+    counts: Counter[str]
+    totals: np.ndarray  # Per target: matched weight, distinct hits, prefix hits.
+    weight: float = 0.0
+
+    def copy(self):
+        return _QueryScores(self.counts.copy(), self.totals.copy(), self.weight)
+
+
 class SlidingQueueSearch(SearchAlgorithm):
     name = 'sliding_queue'
 
     def __init__(
         self, blocks: Sequence[Block], settings: SearchSettings, model=None
     ) -> None:
-        if model is not None:
-            raise ValueError('sliding_queue는 AI 모델을 사용하지 않습니다. model=None으로 지정하세요.')
+        if model is not None and (model.name != 'e5-small' or model.kind != 'embedding'):
+            raise ValueError('sliding_queue는 e5-small 단어 비교만 지원합니다.')
         super().__init__(blocks, settings, model)
         self._queue: deque[str] = deque(maxlen=settings.sliding_window_words)
         # 브라우저 STT의 현재 미확정 단어는 매 갱신마다 교체한다.
@@ -46,11 +68,27 @@ class SlidingQueueSearch(SearchAlgorithm):
         self._page_tokens: dict[int, tuple[str, ...]] = {}
         self._page_pairs: dict[int, set[tuple[str, str]]] = {}
         self._idf: dict[str, float] = {}
+        self._term_matches: OrderedDict[str, _TermMatch] = OrderedDict()
         self._build_index()
+        targets = {**self._block_tokens, **self._page_tokens}
+        self._target_index = {key: i for i, key in enumerate(targets)}
+        self._target_terms = [(set(words), set(words[:max(1, len(words) // 3)]))
+                              for words in targets.values()]
+        self._target_sizes = [max(1.0, sqrt(len(words))) for words, _ in self._target_terms]
+        self._history_scores = _QueryScores(Counter(), np.zeros((len(targets), 3)))
+        self._latest_scores = self._history_scores.copy()
+
+    @property
+    def document_terms(self) -> tuple[str, ...]:
+        return tuple(self._idf)
+
+    def _matches(self, query: str, word: str) -> bool:
+        cached = self._term_matches.get(query)
+        return word in cached.words if cached is not None else matches(query, word)
 
     @property
     def buffer_words(self) -> tuple[str, ...]:
-        # 실제 탐색에 사용 중인 '확정 + 미확정' 최근 N단어를 그대로 표시한다.
+        # 실제 탐색에 사용 중인 '확정 + 미확정' 최근 N개 명사를 표시한다.
         return tuple(deque((*self._queue, *self._live_words), maxlen=self._queue.maxlen))
 
     def _build_index(self) -> None:
@@ -71,40 +109,67 @@ class SlidingQueueSearch(SearchAlgorithm):
         self._idf = {word: log((total + 1) / (count + 1)) + 1.0 for word, count in counts.items()}
         self._page_tokens = {page: tuple(words) for page, words in pages.items()}
 
-    def _term_idf(self, word: str) -> float:
-        # 일치하는 문서 토큰의 최대 IDF를 사용한다.
-        if word in self._idf:
-            return self._idf[word]
-        return max((weight for term, weight in self._idf.items() if matches(word, term)), default=1.0)
+    def _prepare_matches(self, terms: Sequence[str]) -> None:
+        missing = [term for term in terms if term not in self._term_matches]
+        semantic = (self.model.match_terms(missing, self.settings.word_match_threshold)
+                    if missing and self.model is not None else {})
+        for term in missing:
+            words = frozenset(word for word in self._idf
+                              if matches(term, word) or word in semantic.get(term, ()))
+            idf = self._idf.get(term, max((self._idf[word] for word in words), default=1.0))
+            hits, prefixes = [], []
+            for index, (all_words, prefix_words) in enumerate(self._target_terms):
+                if words & all_words:
+                    hits.append(index)
+                    if words & prefix_words:
+                        prefixes.append(index)
+            self._term_matches[term] = _TermMatch(words, idf, np.array(hits, dtype=np.intp),
+                                                 np.array(prefixes, dtype=np.intp))
+        for term in terms:
+            self._term_matches.move_to_end(term)
 
-    def _similarity(self, query_words: Counter[str], query_idf: dict[str, float], words: tuple[str, ...]) -> float:
-        if not words:
+    def _update_scores(self, state: _QueryScores, counts: Counter[str]) -> None:
+        for term in dict.fromkeys((*state.counts, *counts)):
+            previous, current = state.counts[term], counts[term]
+            if previous == current:
+                continue
+            evidence = self._term_matches[term]
+            def weight(count):
+                return evidence.idf * (1 + .15 * min(count - 1, 2)) if count else 0.0
+            delta = weight(current) - weight(previous)
+            present = int(current > 0) - int(previous > 0)
+            state.weight += delta
+            state.totals[evidence.hits, 0] += delta
+            state.totals[evidence.hits, 1] += present
+            state.totals[evidence.prefixes, 2] += present
+        state.counts = counts
+        # Clear round-off after removals; no expired contribution survives.
+        state.totals[state.totals[:, 1] == 0] = 0
+        if not counts:
+            state.weight = 0.0
+
+    def _sync_scores(self, history: Counter[str], latest: Counter[str]) -> None:
+        active = tuple(dict.fromkeys((*history, *latest)))
+        self._prepare_matches(active)
+        self._update_scores(self._history_scores, history)
+        self._update_scores(self._latest_scores, latest)
+        # Bound memoization but never evict evidence still contributing to a queue.
+        limit = max(512, len(active))
+        active = set(active)
+        for term in tuple(self._term_matches):
+            if len(self._term_matches) <= limit:
+                break
+            if term not in active:
+                del self._term_matches[term]
+
+    def _similarity(self, state: _QueryScores, index: int) -> float:
+        matched, hits, prefix_hits = state.totals[index]
+        if state.weight <= 0 or hits == 0:
             return 0.0
-        unique_doc = set(words)
-        total = 0.0
-        matched = 0.0
-        hit_count = 0
-        prefix_limit = max(1, len(words) // 3)
-        prefix_hits = 0
-
-        for query_word, times in query_words.items():
-            # 같은 키워드가 여러 번 등장해도 가중치를 제한한다.
-            weight = query_idf[query_word] * (1.0 + 0.15 * min(times - 1, 2))
-            total += weight
-            if any(matches(query_word, doc_word) for doc_word in unique_doc):
-                matched += weight
-                hit_count += 1
-                if any(matches(query_word, w) for w in words[:prefix_limit]):
-                    prefix_hits += 1
-        if total == 0 or hit_count == 0:
-            return 0.0
-
-        coverage = matched / total
-        # 짧은 PDF 블록이 한 단어만 일치했다고 무조건 1위가 되는 것을 완화
-        specificity = min(1.0, hit_count / max(1.0, sqrt(len(unique_doc))))
-        base = 0.86 * coverage + 0.14 * specificity
-        prefix_ratio = prefix_hits / hit_count
-        return min(1.0, base + self.settings.prefix_bonus * prefix_ratio)
+        coverage = matched / state.weight
+        specificity = min(1.0, hits / self._target_sizes[index])
+        return min(1.0, 0.86 * coverage + 0.14 * specificity
+                   + self.settings.prefix_bonus * prefix_hits / hits)
 
     def _candidate_score(self, similarity: float, page: int, anchor: int) -> float:
         # Adjacent slides are normal lecture progress; a more distant jump
@@ -123,9 +188,9 @@ class SlidingQueueSearch(SearchAlgorithm):
         self._stream_anchor = None
         self._stream_utterance = None
         self._clear_pending()
-        words = tokenize(speech_text)
+        words = lexical_terms(speech_text)
         self._queue.extend(words)
-        return self._evaluate(words)
+        return self._evaluate(words, source_text=speech_text)
 
     def stream_update(self, speech_text: str, is_final: bool,
                       utterance_id: str | None = None) -> AlgorithmResult:
@@ -135,7 +200,7 @@ class SlidingQueueSearch(SearchAlgorithm):
         중간 인식 수정은 과거 가설이 아닌 최신 가설만 사용한다.
         미확정 상태에서도 current_page와 하이라이트 위치는 갱신한다.
         """
-        words = tokenize(speech_text)
+        words = lexical_terms(speech_text)
         if utterance_id is not None and utterance_id != self._stream_utterance:
             self._stream_anchor = None
             self._clear_pending()
@@ -148,7 +213,8 @@ class SlidingQueueSearch(SearchAlgorithm):
             self._queue.extend(words)
         else:
             self._live_words = tuple(words)
-        result = self._confirm_transition(self._evaluate(words, anchor, commit=False), words, is_final)
+        result = self._confirm_transition(
+            self._evaluate(words, anchor, commit=False, source_text=speech_text), words, is_final)
         if result.page is not None:
             self.current_page = result.page
         if result.page is not None and abs(result.page - anchor) == 1:
@@ -172,19 +238,19 @@ class SlidingQueueSearch(SearchAlgorithm):
             self._clear_pending()
             return result
         recent = words[-self.settings.sliding_window_words:]
-        terms = lexical_terms(' '.join(recent))
+        terms = tuple(recent)
         support = frozenset(term for term in terms if any(
-            matches(term, word) for word in self._page_tokens[result.page]
+            self._matches(term, word) for word in self._page_tokens[result.page]
         ))
         novel_support = {term for term in support if term not in _GENERIC_TRANSITIONS and not any(
-            matches(term, word) for word in self._page_tokens.get(self.current_page, ())
+            self._matches(term, word) for word in self._page_tokens.get(self.current_page, ())
         )}
-        content_words = [word for word in recent if lexical_terms(word)]
+        content_words = recent
         # A genuinely unique keyword can still follow immediately (e.g. DISTINCT).
         # Common short nouns and discourse words cannot move the viewer alone.
         focused = (len(content_words) == 1 and len(content_words[0]) >= 3
                    and (result.score or 0) >= 0.8 and bool(support)
-                   and sum(all(any(matches(term, word) for word in page_words)
+                   and sum(all(any(self._matches(term, word) for word in page_words)
                                for term in terms) for page_words in self._page_tokens.values()) == 1)
         # The rolling word window may drop its prefix as speech grows. Require
         # overlapping consecutive speech, not repeated or unrelated hypotheses.
@@ -208,48 +274,46 @@ class SlidingQueueSearch(SearchAlgorithm):
         return AlgorithmResult(status='NONE')
 
     def _evaluate(self, latest_words: Sequence[str], anchor: int | None = None,
-                  *, commit: bool = True) -> AlgorithmResult:
+                  *, commit: bool = True, source_text: str = '') -> AlgorithmResult:
         anchor = self.current_page if anchor is None else anchor
         current_words = self.buffer_words
-        if not current_words:
+        query_words = Counter(current_words)
+        latest_terms = tuple(latest_words[-self.settings.sliding_window_words:])
+        self._sync_scores(query_words, Counter(latest_terms))
+        if not current_words or not latest_terms:
             return AlgorithmResult(status='NONE')
-
-        query_words = Counter(lexical_terms(' '.join(current_words)))
-        latest_terms = lexical_terms(' '.join(latest_words[-self.settings.sliding_window_words:]))
-        if not latest_terms:
-            return AlgorithmResult(status='NONE')
-        query_idf = {word: self._term_idf(word) for word in query_words}
-        fresh_query = Counter(latest_terms)
-        fresh_idf = {word: self._term_idf(word) for word in fresh_query}
         radius = self.settings.local_radius_pages
         candidates: list[tuple[float, Block]] = []
 
-        def similarity(words: tuple[str, ...]) -> float:
+        def similarity(target: str | int) -> float:
             # Give the current utterance priority while retaining the bounded
             # history for context. Otherwise a short topic change can never
             # outweigh the previous, longer sentence in the same 15-word queue.
-            history = self._similarity(query_words, query_idf, words)
-            fresh = self._similarity(fresh_query, fresh_idf, words)
+            index = self._target_index[target]
+            history = self._similarity(self._history_scores, index)
+            fresh = self._similarity(self._latest_scores, index)
             return (history + 2 * fresh) / 3
 
-        page_scores = {page: similarity(words)
+        page_scores = {page: similarity(page)
                        for page, words in self._page_tokens.items()
                        if abs(page - anchor) <= radius}
         anchor_words = self._page_tokens.get(anchor, ())
         novel = {term for term in latest_terms
                  if term not in _GENERIC_TRANSITIONS
-                 and not any(matches(term, word) for word in anchor_words)}
+                 and not any(self._matches(term, word) for word in anchor_words)}
         query_pairs = set(zip(latest_terms, latest_terms[1:]))
-        reference = _REFERENCE.search(' '.join(latest_words[-self.settings.sliding_window_words:]))
+        # Inspect original speech for references such as 앞에서/나중에, whose
+        # particles are intentionally absent from the noun queue.
+        reference = _REFERENCE.search(' '.join(tokenize(source_text)[-self.settings.sliding_window_words:]))
         eligible_pages = {anchor}
         for page in page_scores:
             if page == anchor or reference:
                 continue
             page_words = self._page_tokens[page]
-            new_hits = {term for term in novel if any(matches(term, word) for word in page_words)}
+            new_hits = {term for term in novel if any(self._matches(term, word) for word in page_words)}
             new_pairs = (query_pairs & self._page_pairs[page]) - self._page_pairs.get(anchor, set())
             focused = len(set(latest_terms)) == 1 and sum(
-                any(matches(latest_terms[0], word) for word in self._page_tokens[other])
+                any(self._matches(latest_terms[0], word) for word in self._page_tokens[other])
                 for other in page_scores
             ) == 1
             if len(new_hits) >= 2 or (new_hits and new_pairs) or focused:
@@ -259,10 +323,10 @@ class SlidingQueueSearch(SearchAlgorithm):
                 continue
             # History can disambiguate a new utterance, but cannot supply all
             # evidence for unrelated speech or an empty/filler hypothesis.
-            if not any(matches(term, word) for term in latest_terms
+            if not any(self._matches(term, word) for term in latest_terms
                        for word in self._block_tokens[block.block_id]):
                 continue
-            raw = similarity(self._block_tokens[block.block_id])
+            raw = similarity(block.block_id)
             if raw == 0:
                 continue
             # Speech can span a heading, explanation and figure on the same slide.
@@ -316,6 +380,9 @@ class SlidingQueueSearch(SearchAlgorithm):
         미확정 전체 문장을 그대로 누적하면 단어가 중복되므로 큐/현재 페이지를 복사해
         임시 점수만 계산한 뒤 원래 상태로 복원한다. (SearchSession.lock 안에서 호출)
         """
+        committed_matches = self._term_matches.copy()
+        committed_history = self._history_scores.copy()
+        committed_latest = self._latest_scores.copy()
         committed_queue = self._queue
         committed_page = self.current_page
         committed_live = self._live_words
@@ -327,6 +394,9 @@ class SlidingQueueSearch(SearchAlgorithm):
         try:
             return self.search(speech_text)
         finally:
+            self._term_matches = committed_matches
+            self._history_scores = committed_history
+            self._latest_scores = committed_latest
             self._queue = committed_queue
             self.current_page = committed_page
             self._live_words = committed_live
@@ -336,6 +406,9 @@ class SlidingQueueSearch(SearchAlgorithm):
              self._pending_words, self._pending_score) = committed_pending
 
     def reset(self) -> None:
+        self._term_matches.clear()
+        self._history_scores = _QueryScores(Counter(), np.zeros((len(self._target_index), 3)))
+        self._latest_scores = self._history_scores.copy()
         self._queue.clear()
         self._live_words = ()
         self._stream_anchor = None

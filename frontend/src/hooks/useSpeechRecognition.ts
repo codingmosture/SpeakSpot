@@ -2,9 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { SpeechResultTracker, type SpeechRecognitionEventLike } from '../lib/speechResults'
 
 /*
- * 브라우저 Web Speech API 기반 임시 STT.
- * 백엔드 STT(WebSocket 스트리밍)가 준비되면 같은 인터페이스
- * ({ listening, interim, start, stop })를 유지한 채 내부 구현만 교체한다.
+ * 브라우저 Web Speech API 기반 STT.
  * Chrome / Edge 에서 동작한다.
  */
 

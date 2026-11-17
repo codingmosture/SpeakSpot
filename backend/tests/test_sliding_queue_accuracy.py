@@ -18,26 +18,21 @@ def engine_for(blocks, **settings):
     return engine
 
 
-@pytest.mark.parametrize('spoken,written', [
-    ('크리에이트 테이블', 'CREATE TABLE'),
-    ('얼터 테이블 애드로', 'ALTER TABLE ADD'),
-    ('드롭 컬럼을', 'DROP COLUMN'),
-    ('셀렉트 디스팅트', 'SELECT DISTINCT'),
-    ('프라이머리키는 유니크로', 'PRIMARY KEY UNIQUE'),
-    ('낫널은 디폴트로', 'NOT NULL DEFAULT'),
-    ('오더 바이 에이에스씨', 'ORDER BY ASC'),
-    ('그룹 바이', 'GROUP BY'),
-    ('레프트 아우터 조인으로', 'LEFT OUTER JOIN'),
+@pytest.mark.parametrize('recognized,written', [
+    ('CREATE TABLE', 'CREATE TABLE'), ('ALTER TABLE ADD로', 'ALTER TABLE ADD'),
+    ('DROP COLUMN을', 'DROP COLUMN'), ('SELECT DISTINCT', 'SELECT DISTINCT'),
+    ('PRIMARY KEY는 UNIQUE로', 'PRIMARY KEY UNIQUE'), ('NOT NULL은 DEFAULT로', 'NOT NULL DEFAULT'),
+    ('ORDER BY ASC', 'ORDER BY ASC'), ('GROUP BY', 'GROUP BY'), ('LEFT OUTER JOIN으로', 'LEFT OUTER JOIN'),
 ])
-def test_spoken_sql_and_written_sql_use_same_terms(spoken, written):
-    assert set(lexical_terms(written)) <= set(lexical_terms(spoken))
+def test_recognized_sql_matches_document_spelling(recognized, written):
+    assert set(lexical_terms(written)) <= set(lexical_terms(recognized))
     engine = engine_for([block(1, '강의 소개'), block(2, written)])
-    assert engine.search('s', spoken).page == 2
+    assert engine.search('s', recognized).page == 2
 
 
-def test_aliases_do_not_replace_parts_of_other_words():
-    terms = lexical_terms('컨트롤러 미들웨어 롤러코스터')
-    assert not {'role', 'where'} & set(terms)
+def test_search_does_not_rewrite_spoken_sql_with_a_fixed_dictionary():
+    assert not {'select', 'distinct', 'foreign', 'key', 'role', 'where'} & set(
+        lexical_terms('셀렉트 디스팅트 포링 키 컨트롤러 미들웨어 롤러코스터'))
 
 
 def test_spacing_particles_and_conjugations_match_ocr_text():
@@ -72,7 +67,8 @@ def test_short_new_topic_overcomes_long_previous_utterance_in_live_queue():
     engine.live_search('s', '데이터베이스 관계형 모델의 기본 개념 구조 원리 특성 이해', 'u1', 1, True)
     result, words, page = engine.live_search('s', '인덱스 탐색', 'u2', 2, False)
     assert result.status == 'NONE' and page == 2
-    assert '데이터베이스' in words and words[-2:] == ['인덱스', '탐색']
+    assert '이해' in words and words[-2:] == ['인덱스', '탐색']
+    assert len(words) == 8
     # Revisions replace the hypothesis; the final is committed once.
     engine.live_search('s', '인덱스 탐색', 'u2', 3, True)
     assert engine.get_current_page('s') == 3
@@ -126,7 +122,7 @@ def test_overview_and_references_do_not_chase_the_detailed_topic():
         block(4, 'SQL 분류 정의어 조작어 제어어'),
         block(5, '테이블 생성 변경 삭제 데이터 조작 접근 권한'),
     ])
-    engine.live_search('s', '크리에이트 테이블 얼터 테이블 드랍 테이블 객체 권한 역할', 'overview', 1, True)
+    engine.live_search('s', 'CREATE TABLE ALTER TABLE DROP TABLE 객체 권한 역할', 'overview', 1, True)
     assert engine.get_current_page('s') == 2
     engine.live_search('s', '추가로 삽입 SQL 프로그래밍을 후반부에 소개합니다', 'reference', 2, False)
     assert engine.get_current_page('s') == 2
@@ -149,7 +145,7 @@ def test_shared_schema_terms_do_not_move_to_the_later_explanation():
         '테이블 이름과 속성 이름 데이터 타입을 나열합니다',
         '속성이 null인지 null 값 여부를 표현하고 default 값을 설정합니다',
         'primary key를 설정하고 복합키는 여러 속성 리스트로 표현합니다',
-        '유니크는 대체키 외래키는 포링키로 정의합니다',
+        'UNIQUE와 FOREIGN KEY를 정의합니다',
     ], 1):
         engine.live_search('s', text, str(sequence), sequence, True)
         assert engine.get_current_page('s') == 1

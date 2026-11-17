@@ -45,16 +45,6 @@ export interface BlocksResponse {
   blocks: Block[]
 }
 
-/* ---------- 2.3 STTSegment ---------- */
-
-export interface STTSegment {
-  segment_id: string
-  text: string
-  start_ms: number
-  end_ms: number
-  is_final: boolean
-}
-
 /* ---------- 2.4 SearchResult ---------- */
 
 export type SearchStatus = 'MATCH' | 'NONE'
@@ -80,14 +70,13 @@ export interface SearchResult {
 /* ---------- 2.5 SessionConfig ---------- */
 
 export interface SessionConfig {
-  stt_model: string
   search_model: string | null
   search_strategy: SearchStrategy
   /** 최근 단어만 유지하는 슬라이딩 검색 큐의 길이 */
   sliding_window_words?: number
   local_radius_pages: number
-  stt_buffer_seconds: number
-  stt_update_interval_seconds: number
+  /** E5 개별 단어 코사인 유사도의 일치 기준 */
+  word_match_threshold?: number
   min_match_score?: number
   backward_penalty?: number
   stay_bonus?: number
@@ -145,24 +134,6 @@ export interface TimelineResponse {
   items: TimelineItem[]
 }
 
-/* ---------- 4. WebSocket ---------- */
-
-export interface AudioFormat {
-  encoding: 'pcm_s16le'
-  sample_rate: 16000
-  channels: 1
-}
-
-export type ClientMessage =
-  | { type: 'session.start'; payload: AudioFormat }
-  | { type: 'session.stop'; payload: Record<string, never> }
-
-export type ServerMessage =
-  | { type: 'session.ready'; payload: { session_id: string } }
-  | { type: 'stt.result'; payload: STTSegment }
-  | { type: 'highlight.update'; payload: SearchResult }
-  | { type: 'error'; payload: { code: string; message: string } }
-
 /* ---------- 6. 오류 ---------- */
 
 export interface ErrorBody {
@@ -175,7 +146,7 @@ export interface ErrorBody {
 
 /* ---------- 프론트 전용 ---------- */
 
-export type EntrySource = 'server-stt' | 'browser-stt' | 'manual'
+export type EntrySource = 'browser-stt' | 'manual'
 
 /** 발화 1건에 대한 타임라인 기록 */
 export interface TimelineEntry {
@@ -187,7 +158,7 @@ export interface TimelineEntry {
   createdAt: number
   pending: boolean
   result: SearchResult | null
-  /** 요청~응답 왕복 시간 (HTTP) 또는 STT 확정~하이라이트 수신 시간 (WS) */
+  /** 검색 요청~응답 왕복 시간 (HTTP) */
   roundTripMs: number | null
   error: string | null
 }

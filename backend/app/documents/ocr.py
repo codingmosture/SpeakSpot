@@ -38,7 +38,7 @@ class OCRConfig:
 
 def extract_page_text(page: fitz.Page, config: OCRConfig) -> dict:
     # Do not load image binaries into the text dictionary.
-    native = page.get_text("dict", flags=TEXT_FLAGS)
+    native = _native_text(page)
     if not config.enabled:
         return native
     images = _image_regions(page)
@@ -72,6 +72,31 @@ def extract_page_text(page: fitz.Page, config: OCRConfig) -> dict:
         )
         # Do not report a mixed document as ready while silently dropping its images.
         raise ValueError(message) from exc
+
+
+def _native_text(page: fitz.Page) -> dict:
+    """Keep PDF word gaps that MuPDF omits between Korean glyphs."""
+    native = page.get_text("rawdict", flags=TEXT_FLAGS)
+    for block in native.get("blocks", []):
+        for line in block.get("lines", []):
+            glyphs = [(span, char) for span in line.get("spans", []) for char in span.get("chars", [])]
+            gaps = {}
+            horizontal = line.get("dir", (1, 0))[0] > .99
+            for (left_span, left), (right_span, right) in zip(glyphs, glyphs[1:]):
+                a, b = left["c"], right["c"]
+                size = min(left_span["size"], right_span["size"])
+                if (horizontal and size > 0 and a.isalnum() and b.isalnum()
+                        and any('가' <= c <= '힣' for c in a + b)
+                        and abs(left["origin"][1] - right["origin"][1]) <= size * .1):
+                    gaps[id(right)] = max(0, right["bbox"][0] - left["bbox"][2]) / size
+            # Subtract ordinary letter tracking so a spaced-out word stays intact.
+            tracking = sorted(gaps.values())[len(gaps) // 4] if gaps else 0
+            for span in line.get("spans", []):
+                span["text"] = ''.join(
+                    (' ' if gaps.get(id(char), 0) > tracking + .15 else '') + char["c"]
+                    for char in span.pop("chars", [])
+                )
+    return native
 
 
 def _image_regions(page: fitz.Page) -> list[fitz.Rect]:

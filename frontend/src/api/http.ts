@@ -83,11 +83,4 @@ export const httpApi: SpeakSpotApi = {
   getTimeline: (sessionId) =>
     request(`${V1}/sessions/${encodeURIComponent(sessionId)}/timeline`),
 
-  streamUrl: (sessionId) => {
-    const base = API_ORIGIN
-      ? new URL(API_ORIGIN)
-      : new URL(window.location.href)
-    const protocol = base.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${protocol}//${base.host}/api/v1/sessions/${encodeURIComponent(sessionId)}/stream`
-  },
 }

@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pymupdf as fitz
 import pytest
 
-from app.documents.ocr import DEFAULT_TESSDATA, OCRConfig
+from app.documents.ocr import DEFAULT_TESSDATA, OCRConfig, extract_page_text
 from app.documents.parser import PDFParser
 
 
@@ -131,6 +131,55 @@ def test_native_rotated_highlight_coordinates(tmp_path, rotation):
         normalized = (expected.x0 / page.rect.width, expected.y0 / page.rect.height,
                       expected.x1 / page.rect.width, expected.y1 / page.rect.height)
     assert blocks[0].bbox == pytest.approx(normalized, abs=0.0002)
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_korean_word_gaps_without_space_characters(tmp_path, rotation):
+    path = tmp_path / "positioned-words.pdf"
+    title = "저장 프로시저 프로그래밍(1)"
+    with fitz.open() as doc:
+        page = doc.new_page(width=600, height=700)
+        x, size = 50, 24
+        for word in title.split():
+            page.insert_text((x, 160), word, fontsize=size, fontname="korea")
+            x += fitz.get_text_length(word, fontname="korea", fontsize=size) + size * .23
+        page.set_rotation(rotation)
+        doc.save(path)
+    parser = PDFParser(OCRConfig(enabled=False))
+    _, raw = parser.parse_raw(str(path))
+    _, blocks = parser.parse(str(path))
+    assert [b.text for b in raw] == [title]
+    assert [b.text for b in blocks] == [title]
+    assert blocks[0].rects == raw[0].rects
+    assert {"저장", "프로시저", "프로그래밍"} <= set(blocks[0].keywords)
+    assert_valid_blocks(blocks)
+
+
+@pytest.mark.parametrize("text,font", [
+    ("저장프로시저프로그래밍", "korea"),
+    ("저장 프로시저 프로그래밍(1)", "korea"),
+    ("SELECT account_id FROM example_table WHERE amount>=10;", "helv"),
+])
+def test_native_spacing_preserves_explicit_spaces_compounds_and_code(tmp_path, text, font):
+    path = tmp_path / "existing-spacing.pdf"
+    with fitz.open() as doc:
+        page = doc.new_page(width=600, height=700)
+        page.insert_text((50, 160), text, fontsize=14, fontname=font)
+        doc.save(path)
+    _, blocks = PDFParser(OCRConfig(enabled=False)).parse(str(path))
+    assert [b.text for b in blocks] == [text]
+
+
+def test_uniform_korean_letter_tracking_does_not_split_a_word():
+    with fitz.open() as doc:
+        page = doc.new_page(width=600, height=700)
+        x = 50
+        for char in "프로그래밍":
+            page.insert_text((x, 160), char, fontsize=24, fontname="korea")
+            x += 24 * 1.2
+        extracted = extract_page_text(page, OCRConfig(enabled=False))
+        assert ''.join(s['text'] for b in extracted['blocks']
+                       for line in b.get('lines', []) for s in line['spans']) == "프로그래밍"
 
 
 REAL_OCR = all((DEFAULT_TESSDATA / f"{lang}.traineddata").is_file() for lang in ("eng", "kor"))

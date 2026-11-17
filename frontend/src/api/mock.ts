@@ -199,5 +199,4 @@ export const mockApi: SpeakSpotApi = {
     return { session_id: sessionId, items: [...session.timeline] }
   },
 
-  streamUrl: () => null,
 }

@@ -27,8 +27,6 @@ export interface SpeakSpotApi {
   /** 중간 발화마다 실제 슬라이딩 큐/현재 페이지를 갱신한다. */
   liveSearch?(body: LiveSearchRequest): Promise<LiveSearchResult>
   getTimeline(sessionId: string): Promise<TimelineResponse>
-  /** 실시간 STT WebSocket 주소. Mock 모드에서는 null */
-  streamUrl(sessionId: string): string | null
 }
 
 export class ApiError extends Error {

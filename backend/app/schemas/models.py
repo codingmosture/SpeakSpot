@@ -29,10 +29,6 @@ class Block(BaseModel):
     keywords: list[str] = Field(default_factory=list)
 
 
-# 3. STT 음성 인식 결과 (STT 모듈의 실제 모델과 동일한 클래스)
-from app.schemas.stt_models import STTSegment
-
-
 SearchStrategyName = Literal["sliding_queue", "local", "global", "hybrid1", "hybrid2", "hybrid"]
 SearchStageName = Literal["sliding_queue", "local", "global", "none"]
 
@@ -68,13 +64,11 @@ class SearchResult(BaseModel):
 
 # 5. 모델 설정
 class SessionConfig(BaseModel):
-    stt_model: str = "not-configured"
     search_model: str | None = None
     search_strategy: SearchStrategyName = "sliding_queue"
     local_radius_pages: int = Field(default=5, ge=0, le=100)
-    stt_buffer_seconds: float = Field(default=5.0, gt=0)
-    stt_update_interval_seconds: float = Field(default=2.0, gt=0)
-    sliding_window_words: int = Field(default=15, ge=1, le=500)
+    sliding_window_words: int = Field(default=8, ge=1, le=500)
+    word_match_threshold: float = Field(default=0.90, ge=0, le=1)
     min_match_score: float = Field(default=0.34, ge=0, le=1)
     backward_penalty: float = Field(default=0.08, ge=0, le=1)
     stay_bonus: float = Field(default=0.025, ge=0, le=1)

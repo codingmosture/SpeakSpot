@@ -43,6 +43,53 @@ def test_embedding_model_real_encoder_interface_with_stub(monkeypatch, class_, p
     assert len(encoder.seen) == 2  # query cache
 
 
+def test_e5_word_vectors_use_symmetric_prefix_and_batch_cache(monkeypatch):
+    class WordEncoder:
+        def __init__(self):
+            self.seen = []
+        def encode(self, texts, **kwargs):
+            self.seen.append(texts)
+            values = {'query: 검색': [1., 0.], 'query: 탐색': [.96, .28],
+                      'query: 삭제': [0., 1.], 'query: 점심': [-1., 0.]}
+            return np.array([values[text] for text in texts])
+
+    encoder = WordEncoder()
+    monkeypatch.setattr(embeddings_module, '_load_encoder', lambda *_: encoder)
+    embeddings_module._DOCUMENT_CACHE.clear()
+    model = E5SmallModel()
+    model.prepare_terms('word_test', ['탐색', '삭제', '탐색'])
+    assert encoder.seen == [['query: 탐색', 'query: 삭제']]
+    result = model.match_terms(['검색', '점심', '검색'], .90)
+    assert result == {'검색': frozenset(['탐색']), '점심': frozenset()}
+    assert encoder.seen[-1] == ['query: 검색', 'query: 점심']
+    model.match_terms(['검색', '점심'], .90)
+    assert len(encoder.seen) == 2
+    assert model.match_terms(['검색'], .99)['검색'] == frozenset()
+    other = E5SmallModel()
+    other.prepare_terms('word_test', ['탐색', '삭제'])
+    assert len(encoder.seen) == 2  # document terms cached across sessions
+
+
+def test_e5_empty_word_document_does_not_load_model(monkeypatch):
+    monkeypatch.setattr(embeddings_module, '_load_encoder', lambda *_: pytest.fail('no terms to encode'))
+    model = E5SmallModel()
+    model.prepare_terms('empty', [])
+    assert model.match_terms(['검색'], .90) == {}
+
+
+def test_e5_word_encoding_failure_is_reported(monkeypatch):
+    encoder = Encoder()
+    monkeypatch.setattr(embeddings_module, '_load_encoder', lambda *_: encoder)
+    embeddings_module._DOCUMENT_CACHE.clear()
+    model = E5SmallModel()
+    model.prepare_terms('word_failure', ['탐색'])
+    def fail(*args, **kwargs):
+        raise RuntimeError('encoder failure')
+    monkeypatch.setattr(encoder, 'encode', fail)
+    with pytest.raises(ModelRequestError, match='단어 임베딩 실패'):
+        model.match_terms(['검색'], .90)
+
+
 def test_jev_requires_key(monkeypatch):
     monkeypatch.delenv('TYPESAFE_API_KEY', raising=False)
     with pytest.raises(ModelUnavailableError):

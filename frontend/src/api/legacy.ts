@@ -175,5 +175,4 @@ export const legacyApi: SpeakSpotApi = {
     return { session_id: sessionId, items: [...requireSession(sessionId).timeline] }
   },
 
-  streamUrl: () => null,
 }

@@ -46,10 +46,10 @@ def test_default_starts_page_one_and_matches():
 def test_recent_words_replace_old_words_without_score_accumulation():
     engine = sample_engine(window=3)
     engine.search('session', 'DISTINCT 중복 제거')
-    result = engine.search('session', '정규화 종속성 테이블')
+    result = engine.search('session', '정규화 함수 테이블')
     assert result.status == 'MATCH'
     assert result.page == 3
-    assert engine.get_buffer_words('session') == ['정규화', '종속성', '테이블']
+    assert engine.get_buffer_words('session') == ['정규화', '함수', '테이블']
 
 
 def test_forward_radius_based_on_current_page():
@@ -57,7 +57,7 @@ def test_forward_radius_based_on_current_page():
     result = engine.search('session', '제어 흐름 상태')
     assert result.status == 'NONE'  # 7p: 초기 1p에서 범위 밖
     assert engine.get_current_page('session') == 1
-    engine.search('session', '정규화 종속성 테이블')
+    engine.search('session', '정규화 함수 테이블')
     result = engine.search('session', '제어 흐름 상태')
     assert result.status == 'MATCH'
     assert result.page == 7
@@ -112,17 +112,17 @@ def test_model_requirements_and_invalid_combinations():
         engine.create_session('not-yet', 'doc', algorithm='sliding_queue', model='invalid')
 
 
-def test_default_sliding_queue_keeps_only_latest_15_words():
+def test_default_sliding_queue_keeps_only_latest_8_nouns():
     from app.schemas.models import SessionConfig
-    assert SessionConfig().sliding_window_words == 15
-    assert SearchSettings().sliding_window_words == 15
+    assert SessionConfig().sliding_window_words == 8
+    assert SearchSettings().sliding_window_words == 8
 
     engine = SearchEngine()
     engine.register_document('window15', [block(1, '최신 발화 검색')])
     engine.create_session('window15_sess', 'window15')
     engine.search('window15_sess', ' '.join(f'word{i}' for i in range(20)))
     assert engine.get_buffer_words('window15_sess') == [
-        f'word{i}' for i in range(5, 20)
+        f'word{i}' for i in range(12, 20)
     ]
 
 

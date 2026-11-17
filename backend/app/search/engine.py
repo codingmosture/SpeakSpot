@@ -54,8 +54,8 @@ class SearchEngine:
                 algorithm = 'hybrid1'
             if algorithm not in ALGORITHMS:
                 raise ValueError(f'알 수 없는 알고리즘: {algorithm}')
-            if algorithm == 'sliding_queue' and model not in (None, 'none'):
-                raise ValueError('sliding_queue는 모델 없이 실행합니다.')
+            if algorithm == 'sliding_queue' and model not in (None, 'none', 'e5-small'):
+                raise ValueError('sliding_queue는 모델 없이 또는 e5-small과 함께 실행합니다.')
             if algorithm != 'sliding_queue' and model in (None, 'none'):
                 raise ValueError(f'{algorithm} 알고리즘은 검색 모델을 지정해야 합니다.')
             loaded_model = load_model(model)
@@ -63,7 +63,10 @@ class SearchEngine:
                 algorithm, self._documents[document_id], settings or SearchSettings(), loaded_model,
             )
             if loaded_model is not None:
-                loaded_model.prepare(document_id, self._documents[document_id])
+                if isinstance(selected, SlidingQueueSearch):
+                    loaded_model.prepare_terms(document_id, selected.document_terms)
+                else:
+                    loaded_model.prepare(document_id, self._documents[document_id])
             self._sessions[session_id] = SearchSession(document_id, selected)
 
     def search(self, session_id: str, text: str, segment_id: str | None = None,
@@ -172,7 +175,8 @@ class SearchEngine:
                 session_id=session_id, segment_id=None, page=decision.page,
                 block_id=decision.block_id, score=decision.score,
                 strategy=session.algorithm.name, stage_used=decision.stage_used,
-                model='none', processing_ms=round(elapsed, 3),
+                model=session.algorithm.model.name if session.algorithm.model else 'none',
+                processing_ms=round(elapsed, 3),
             )
 
     def reset_session(self, session_id: str) -> None:

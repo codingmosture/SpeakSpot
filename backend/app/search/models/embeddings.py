@@ -56,9 +56,13 @@ class SentenceTransformerSearchModel:
     def prepare(self, document_id: str, blocks: Sequence[Block]) -> None:
         if not blocks:
             raise ValueError('비어 있는 블록 목록입니다.')
-        fingerprint = hashlib.sha256()
-        for block in blocks:
-            fingerprint.update(repr((block.block_id, block.page, block.text, block.keywords)).encode('utf-8'))
+        self._prepare_vectors(document_id, [
+            (b.block_id, self._passage(b.text + (' ' + ' '.join(b.keywords) if b.keywords else '')))
+            for b in blocks
+        ])
+
+    def _prepare_vectors(self, document_id: str, entries: Sequence[tuple[str, str]]) -> None:
+        fingerprint = hashlib.sha256(repr(entries).encode('utf-8'))
         key = (f'{self.model_id}|e5={self._e5}', document_id, fingerprint.hexdigest())
         with _CACHE_LOCK:
             cached = _DOCUMENT_CACHE.get(key)
@@ -68,7 +72,7 @@ class SentenceTransformerSearchModel:
             encoder = _load_encoder(self.model_id, self.device)
             try:
                 cached = encoder.encode(
-                    [self._passage(b.text + (' ' + ' '.join(b.keywords) if b.keywords else '')) for b in blocks],
+                    [text for _, text in entries],
                     batch_size=self.batch_size, normalize_embeddings=True,
                     show_progress_bar=False, convert_to_numpy=True,
                 )
@@ -80,7 +84,7 @@ class SentenceTransformerSearchModel:
                 while len(_DOCUMENT_CACHE) > 6:
                     _DOCUMENT_CACHE.popitem(last=False)
         self._vectors = cached
-        self._index = {block.block_id: i for i, block in enumerate(blocks)}
+        self._index = {item_id: i for i, (item_id, _) in enumerate(entries)}
         self._query_cache.clear()
 
     def rank(self, query: str, candidates: Sequence[Block]) -> list[ModelScore]:
@@ -122,3 +126,41 @@ class BGEM3Model(SentenceTransformerSearchModel):
 class E5SmallModel(SentenceTransformerSearchModel):
     def __init__(self):
         super().__init__('e5-small', 'intfloat/multilingual-e5-small', 'SEARCH_E5_SMALL', e5=True)
+
+
+    def prepare_terms(self, document_id: str, terms: Sequence[str]) -> None:
+        # Symmetric word comparison uses query: on both sides, unlike retrieval.
+        if not terms:
+            self._vectors, self._index = (), {}
+            self._query_cache.clear()
+            return
+        self._prepare_vectors(document_id, [(term, self._query(term)) for term in dict.fromkeys(terms)])
+
+    def match_terms(self, terms: Sequence[str], threshold: float) -> dict[str, frozenset[str]]:
+        if self._vectors is None:
+            raise RuntimeError('E5 단어 인덱스를 먼저 준비하세요.')
+        if not self._index:
+            return {}
+        words = tuple(dict.fromkeys(terms))
+        missing = [word for word in words if word not in self._query_cache and word not in self._index]
+        if missing:
+            try:
+                vectors = _load_encoder(self.model_id, self.device).encode(
+                    [self._query(word) for word in missing], batch_size=self.batch_size,
+                    normalize_embeddings=True, show_progress_bar=False, convert_to_numpy=True,
+                )
+            except Exception as exc:
+                raise ModelRequestError(f'E5 단어 임베딩 실패: {type(exc).__name__}') from exc
+            self._query_cache.update(zip(missing, vectors))
+        result = {}
+        for word in words:
+            if word in self._index:
+                vector = self._vectors[self._index[word]]
+            else:
+                self._query_cache.move_to_end(word)
+                vector = self._query_cache[word]
+            scores = self._vectors @ vector
+            result[word] = frozenset(term for term, i in self._index.items() if scores[i] >= threshold)
+        while len(self._query_cache) > 512:
+            self._query_cache.popitem(last=False)
+        return result

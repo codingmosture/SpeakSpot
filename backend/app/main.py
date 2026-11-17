@@ -4,7 +4,6 @@ from fastapi.exceptions import RequestValidationError
 from app.api.mock import router as mock_router
 from app.api.search import router as search_router
 from app.api.documents import router as documents_router
-from app.api.integration import router as integration_router
 
 app = FastAPI(
     title="SpeakSpot API",
@@ -26,7 +25,6 @@ app.include_router(mock_router)
 app.include_router(search_router)
 
 app.include_router(documents_router)
-app.include_router(integration_router)
 
 
 # 팀 명세서의 단일 오류 응답 형식을 기본 서버에 적용한다.

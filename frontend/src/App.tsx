@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, ApiError } from './api/client'
-import { AppHeader, RecordingToolbar, type ServerStatus, type SttSource, type SttView } from './components/AppHeader'
-import { ControlPanel, DocumentPanel } from './components/ControlPanel'
+import { AppHeader, RecordingToolbar, type ServerStatus } from './components/AppHeader'
 import { DeveloperPanel } from './components/DeveloperPanel'
 import { PdfViewer } from './components/PdfViewer'
-import { Timeline, ResultCard } from './components/Timeline'
+import { Timeline, LiveMatchPanel } from './components/Timeline'
 import { DEFAULT_SESSION_CONFIG, HEALTH_POLL_MS } from './config'
-import { useServerStt } from './hooks/useServerStt'
 import { useSpeechRecognition } from './hooks/useSpeechRecognition'
 import type { PDFDocumentProxy } from './lib/pdf'
 import type {
@@ -15,7 +13,6 @@ import type {
   EntrySource,
   SearchResult,
   Session,
-  STTSegment,
   TimelineEntry,
 } from './types/contracts'
 
@@ -49,6 +46,7 @@ function App() {
   const [blocks, setBlocks] = useState<Block[]>([])
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
   const [documentBusy, setDocumentBusy] = useState(false)
+  const [appliedSttApplyMode, setAppliedSttApplyMode] = useState('realtime')
   const [sessionConfig, setSessionConfig] = useState(() => ({ ...DEFAULT_SESSION_CONFIG }))
   const [appliedConfig, setAppliedConfig] = useState(() => ({ ...DEFAULT_SESSION_CONFIG }))
   const [configRevision, setConfigRevision] = useState(0)
@@ -59,6 +57,7 @@ function App() {
   const liveUpdateTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingLiveUpdate = useRef<{ text: string; utteranceId: string } | null>(null)
   const configDirty = JSON.stringify(sessionConfig) !== JSON.stringify(appliedConfig)
+    || sttApplyMode !== appliedSttApplyMode
 
   const [pageNumber, setPageNumber] = useState(1)
 
@@ -107,10 +106,10 @@ function App() {
   const highlightBlock = livePreviewBlock ?? committedHighlightBlock
 
   const [entries, setEntries] = useState<TimelineEntry[]>([])
+  const [currentSearch, setCurrentSearch] = useState<TimelineEntry | null>(null)
   const seqOf = useRef(new Map<string, number>())
   const nextSeq = useRef(0)
   const lastAppliedSeq = useRef(0)
-  const sttFinalAt = useRef(new Map<string, number>())
 
   const clearPendingLive = useCallback(() => {
     if (liveUpdateTimer.current !== null) clearTimeout(liveUpdateTimer.current)
@@ -124,10 +123,10 @@ function App() {
     clearPendingLive()
     setLiveWords([])
     setEntries([])
+    setCurrentSearch(null)
     setHighlight(null)
     clearPreview()
     seqOf.current.clear()
-    sttFinalAt.current.clear()
     lastAppliedSeq.current = 0
   }, [clearPreview, clearPendingLive])
 
@@ -183,19 +182,17 @@ function App() {
   const addEntry = useCallback(
     (id: string, text: string, source: EntrySource, segment_id: string | null) => {
       seqOf.current.set(id, ++nextSeq.current)
-      setEntries((prev) => [
-        ...prev,
-        {
-          id, segment_id, text, source, createdAt: Date.now(),
-          pending: true, result: null, roundTripMs: null, error: null,
-        },
-      ])
+      const entry = { id, segment_id, text, source, createdAt: Date.now(),
+        pending: true, result: null, roundTripMs: null, error: null }
+      setEntries((prev) => [...prev, entry])
+      setCurrentSearch(entry)
     },
     [],
   )
 
   const updateEntry = useCallback((id: string, changes: Partial<TimelineEntry>) => {
     setEntries((items) => items.map((entry) => entry.id === id ? { ...entry, ...changes } : entry))
+    setCurrentSearch((entry) => entry?.id === id ? { ...entry, ...changes } : entry)
   }, [])
 
   const applyResult = useCallback(
@@ -232,39 +229,6 @@ function App() {
     [addEntry, applyResult, updateEntry],
   )
 
-  const [sttSource, setSttSource] = useState<SttSource>('browser')
-  const streamUrl = sttSource === 'server' && session ? api.streamUrl(session.session_id) : null
-
-  // 서버 STT (WebSocket, contracts.md §4)
-  const handleSegment = useCallback(
-    (segment: STTSegment) => {
-      const id = `stt_${segment.segment_id}`
-      if (seqOf.current.has(id)) return // 확정 결과는 한 번만 처리
-      sttFinalAt.current.set(id, performance.now())
-      addEntry(id, segment.text, 'server-stt', segment.segment_id)
-    },
-    [addEntry],
-  )
-
-  const handleHighlight = useCallback(
-    (result: SearchResult) => {
-      if (result.session_id !== sessionRef.current?.session_id) return
-      const id = result.segment_id ? `stt_${result.segment_id}` : `ws_${++requestSeq.current}`
-      if (!seqOf.current.has(id)) {
-        addEntry(id, '(발화 텍스트 없음)', 'server-stt', result.segment_id)
-      }
-      const finalAt = sttFinalAt.current.get(id)
-      applyResult(id, result, finalAt != null ? Math.round(performance.now() - finalAt) : null)
-    },
-    [addEntry, applyResult],
-  )
-
-  const serverStt = useServerStt({
-    url: streamUrl,
-    onSegment: handleSegment,
-    onHighlight: handleHighlight,
-  })
-
   // 브라우저 STT의 매 중간 결과를 /search/live로 순서대로 전달한다.
   // 이전 요청이 완료되기 전에는 다음 가설을 대기시켜 큐가 역순으로 바뀌지 않게 한다.
   // 같은 발화의 미확정 수정은 최신 가설만 유지하고 확정 이벤트는 보존한다.
@@ -276,6 +240,13 @@ function App() {
         const update = liveQueue.current.shift()!
         const current = sessionRef.current
         if (!current) continue
+        const entry: TimelineEntry = {
+          id: `live_${update.utteranceId}`, segment_id: update.utteranceId,
+          text: update.text, source: 'browser-stt', createdAt: Date.now(),
+          pending: true, result: null, roundTripMs: null, error: null,
+        }
+        const started = performance.now()
+        setCurrentSearch(entry)
         try {
           const result = await api.liveSearch({
             session_id: current.session_id,
@@ -286,6 +257,8 @@ function App() {
           })
           if (generation !== liveGeneration.current ||
               sessionRef.current?.session_id !== current.session_id) continue
+          const roundTripMs = Math.round(performance.now() - started)
+          setCurrentSearch({ ...entry, pending: false, result, roundTripMs })
           setLiveWords(result.buffer_words)
           setPreviewResult(!update.isFinal && result.status === 'MATCH' ? result : null)
           if (result.status === 'MATCH' && result.block_id && result.page != null) {
@@ -296,12 +269,14 @@ function App() {
             const id = `live_${update.utteranceId}`
             if (!seqOf.current.has(id)) {
               addEntry(id, update.text, 'browser-stt', update.utteranceId)
-              applyResult(id, result, null)
+              applyResult(id, result, roundTripMs)
             }
           }
         } catch (err) {
           if (generation === liveGeneration.current) {
-            setNotice(errorMessage(err, '실시간 검색에 실패했습니다.'))
+            const message = errorMessage(err, '실시간 검색에 실패했습니다.')
+            setCurrentSearch({ ...entry, pending: false, error: message })
+            setNotice(message)
           }
         }
       }
@@ -317,6 +292,10 @@ function App() {
   // 중간 결과는 최신 가설로 교체하고, 확정 이벤트는 반드시 전달한다.
   const enqueueLive = useCallback((text: string, isFinal: boolean, utteranceId: string) => {
     if (!text.trim() || !sessionRef.current) return
+    if (!api.liveSearch) {
+      if (isFinal) void runSearch(text, 'browser-stt')
+      return
+    }
     liveQueue.current = liveQueue.current.filter(
       (item) => item.isFinal || item.utteranceId !== utteranceId,
     )
@@ -324,7 +303,7 @@ function App() {
       text: text.trim(), isFinal, utteranceId, sequence: ++liveSeq.current,
     })
     void flushLive(liveGeneration.current)
-  }, [flushLive])
+  }, [flushLive, runSearch])
 
   const handleLiveUpdate = useCallback((text: string, isFinal: boolean, utteranceId: string) => {
     if (isFinal) {
@@ -357,28 +336,17 @@ function App() {
   useEffect(() => clearPendingLive, [clearPendingLive])
 
   // 브라우저 STT: 매 중간 가설이 실제 큐/현재 페이지를 갱신한다.
-  const browserStt = useSpeechRecognition({
+  const stt = useSpeechRecognition({
     onUpdate: handleLiveUpdate,
     onFinal: useCallback((text: string) => void runSearch(text, 'browser-stt'), [runSearch]),
   })
 
-  const stt: SttView =
-    sttSource === 'server'
-      ? {
-          supported: serverStt.supported,
-          listening: serverStt.listening,
-          busy: serverStt.phase === 'connecting' || serverStt.phase === 'stopping',
-          interim: serverStt.interim,
-          error: serverStt.error,
-          start: () => void serverStt.start(),
-          stop: () => void serverStt.stop(),
-        }
-      : { ...browserStt, busy: false }
-
   const applyDeveloperSettings = () => {
-    if (configBusy || !session || stt.listening || stt.busy) return
+    if (configBusy || stt.listening) return
     setAppliedConfig({ ...sessionConfig })
+    setAppliedSttApplyMode(sttApplyMode)
     setConfigRevision((revision) => revision + 1)
+    setNotice(activeDoc?.status === 'ready' ? null : '설정을 저장했습니다. PDF 업로드 시 이 설정을 사용합니다.')
   }
 
   async function handleFileSelect(file: File) {
@@ -425,9 +393,6 @@ function App() {
     setPageNumber(r.page)
   }
 
-  // 결과 카드는 가장 최근 발화를 표시 (NONE 이어도 하이라이트는 이전 것을 유지)
-  const currentEntry = entries.at(-1) ?? null
-
   const notices = [notice, sessionReady?.error].filter((n): n is string => !!n)
 
   return (
@@ -435,7 +400,7 @@ function App() {
       <AppHeader serverStatus={serverStatus} mode={api.mode}
         developerOpen={developerOpen} onOpenDeveloper={() => setDeveloperOpen(true)} />
 
-      <RecordingToolbar stt={stt} sttSource={sttSource} canSearch={session !== null} />
+      <RecordingToolbar stt={stt} canSearch={session !== null} />
 
       {notices.length > 0 && (
         <div className="notice error" role="alert">
@@ -449,6 +414,10 @@ function App() {
         <div className="document-workspace">
           <PdfViewer
             pdf={pdf}
+            fileName={activeDoc?.file_name ?? null}
+            documentBusy={documentBusy}
+            sttActive={stt.listening}
+            onFileSelect={(file) => void handleFileSelect(file)}
             pageCount={activeDoc?.page_count ?? 0}
             pageNumber={pageNumber}
             onPageChange={setPageNumber}
@@ -459,19 +428,16 @@ function App() {
           />
         </div>
 
-        <aside className="sidebar" aria-label="문서 검색과 타임라인">
-          <DocumentPanel
-            fileName={activeDoc?.file_name ?? null}
-            pageCount={activeDoc?.page_count ?? 0}
-            documentBusy={documentBusy}
-            sttActive={stt.listening || stt.busy}
-            onFileSelect={(file) => void handleFileSelect(file)}
-          />
-          <ControlPanel
-            canSearch={session !== null}
-            onSubmitText={(text) => void runSearch(text, 'manual')}
-            autoFollow={autoFollow}
-            onAutoFollowChange={setAutoFollow}
+        <aside className="sidebar" aria-label="실시간 매칭과 타임라인">
+          <LiveMatchPanel
+            entry={currentSearch}
+            words={liveWords}
+            windowSize={appliedConfig.sliding_window_words ?? 8}
+            queueEnabled={appliedConfig.search_strategy === 'sliding_queue'}
+            block={currentSearch?.result?.block_id ? blockMap.get(currentSearch.result.block_id) ?? null : null}
+            retainedBlock={committedHighlightBlock}
+            listening={stt.listening}
+            ready={session !== null}
           />
           <Timeline
             entries={entries}
@@ -479,25 +445,24 @@ function App() {
             onSelect={handleSelectEntry}
             onClear={resetTimeline}
           />
-          <ResultCard entry={currentEntry} />
         </aside>
       </main>
       <DeveloperPanel
         open={developerOpen}
         onClose={() => setDeveloperOpen(false)}
-        sttActive={stt.listening || stt.busy}
-        sttSource={sttSource}
-        onSttSourceChange={setSttSource}
-        serverSttAvailable={api.mode === 'server'}
-        canSearch={session !== null}
+        sttActive={stt.listening}
+        documentReady={activeDoc?.status === 'ready'}
+        sessionError={sessionReady?.error ?? null}
+        onStopStt={stt.stop}
         showBlocks={showBlocks}
         onToggleBlocks={setShowBlocks}
+        autoFollow={autoFollow}
+        onAutoFollowChange={setAutoFollow}
         sessionConfig={sessionConfig}
         onConfigChange={setSessionConfig}
         onApplyConfig={applyDeveloperSettings}
         configBusy={configBusy}
         configDirty={configDirty}
-        liveWords={liveWords}
         sttApplyMode={sttApplyMode}
         onSttApplyModeChange={setSttApplyMode}
       />

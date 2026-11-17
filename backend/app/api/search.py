@@ -49,7 +49,8 @@ class SearchRequest(BaseModel):
 def list_search_options():
     return {
         'algorithms': [
-            {'name': name, 'implemented': True, 'requires_model': name != 'sliding_queue'}
+            {'name': name, 'implemented': True, 'requires_model': name != 'sliding_queue',
+             'supported_models': [None, 'e5-small'] if name == 'sliding_queue' else list(MODELS)}
             for name in ALGORITHMS
         ],
         'models': [
@@ -74,6 +75,7 @@ def create_session(request: CreateSessionRequest):
     settings = SearchSettings(
         sliding_window_words=config.sliding_window_words,
         local_radius_pages=config.local_radius_pages,
+        word_match_threshold=config.word_match_threshold,
         min_match_score=config.min_match_score,
         backward_penalty=config.backward_penalty,
         stay_bonus=config.stay_bonus,

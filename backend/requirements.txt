@@ -1,15 +1,13 @@
 # SpeakSpot — install from backend/: python -m pip install -r requirements.txt
 # Existing direct versions/ranges are retained; pip resolves their dependencies.
 
-# API and HTTP/WebSocket clients
+# API and HTTP clients
 fastapi==0.162.0
 uvicorn==0.54.0
 pydantic==2.14.2
 python-multipart==0.0.33
 python-dotenv==1.2.4
 httpx==0.28.1
-websockets==17.4
-requests>=2.32,<3
 
 # PDF/OCR, Korean tokenization and embedding search
 PyMuPDF==2.1
@@ -17,14 +15,6 @@ kiwipiepy==0.24.1
 numpy>=1.26,<3
 sentence-transformers>=3.0
 
-# Local/Google/CLOVA speech recognition, audio files and server microphone
-faster-whisper>=1.1,<2
-av
-sounddevice>=0.5,<1
-google-cloud-speech>=2.41,<3
-grpcio>=1.85.1,<2
-# Matches the checked-in CLOVA nest_pb2.py runtime major.
-protobuf>=7.35.1,<8
 
 # Existing backend regression suites
 pytest

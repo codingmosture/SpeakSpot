@@ -5,6 +5,10 @@ import type { PDFDocumentProxy } from '../lib/pdf'
 
 interface Props {
   pdf: PDFDocumentProxy | null
+  fileName: string | null
+  documentBusy: boolean
+  sttActive: boolean
+  onFileSelect: (file: File) => void
   pageCount: number
   pageNumber: number
   onPageChange: (page: number) => void
@@ -22,6 +26,10 @@ const pageHeight = (element: HTMLDivElement) =>
 
 export function PdfViewer({
   pdf,
+  fileName,
+  documentBusy,
+  sttActive,
+  onFileSelect,
   pageCount,
   pageNumber,
   onPageChange,
@@ -31,6 +39,7 @@ export function PdfViewer({
   emptyMessage,
 }: Props) {
   const hasDocument = pageCount > 0
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const visiblePage = useRef(pageNumber)
 
@@ -56,7 +65,24 @@ export function PdfViewer({
   return (
     <section className="viewer" aria-label="PDF 뷰어">
       <div className="viewer-toolbar">
-        <span className="viewer-label">PDF 뷰어 · 위아래로 스크롤</span>
+        <div className="viewer-document" aria-busy={documentBusy}>
+          <button type="button" className="btn ghost upload-button"
+            disabled={documentBusy || sttActive} onClick={() => fileInputRef.current?.click()}>
+            <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+              <path d="M10 13V3m-4 4 4-4 4 4M3 12v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4" />
+            </svg>
+            {documentBusy ? '분석 중…' : 'PDF 업로드'}
+          </button>
+          <span className="file-name" title={fileName ?? undefined}>
+            {documentBusy ? '문서의 텍스트와 블록을 분석하고 있습니다' : fileName ?? 'PDF 파일을 선택하세요'}
+          </span>
+          <input ref={fileInputRef} type="file" accept="application/pdf,.pdf" hidden aria-label="PDF 파일 선택"
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              if (file) onFileSelect(file)
+              event.target.value = ''
+            }} />
+        </div>
         <div className="pager">
           <button
             type="button"
@@ -121,7 +147,7 @@ export function PdfViewer({
               </svg>
             </span>
             <h2>{emptyMessage ?? '문서에서 시작하세요'}</h2>
-            <p>문서 영역의 PDF 업로드로 파일을 열면<br />음성과 텍스트로 내용을 찾을 수 있습니다.</p>
+            <p>위의 PDF 업로드 버튼으로 문서를 열고<br />음성 인식을 시작하세요.</p>
           </div>
         ) : (
           Array.from({ length: pageCount }, (_, index) => {

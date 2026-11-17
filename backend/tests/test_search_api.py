@@ -1,3 +1,4 @@
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from app.api.search import router
@@ -34,6 +35,44 @@ def test_api_roundtrip():
     assert state['buffer_words'] == ['정규화', '목적']
     assert client.post('/api/v1/sessions/test_api_sess/reset-search').status_code == 200
     assert client.get('/api/v1/sessions/test_api_sess/search-state').json()['buffer_words'] == []
+
+
+def test_sliding_queue_e5_words_can_be_enabled_and_disabled(monkeypatch):
+    from app.search.models.embeddings import E5SmallModel
+    prepared, thresholds = [], []
+    def prepare(self, document_id, terms):
+        prepared.append((document_id, tuple(terms)))
+    def match(self, terms, threshold):
+        thresholds.append(threshold)
+        pairs = {'검색': frozenset(['탐색']), '삭제': frozenset(['제거'])}
+        return {term: pairs[term] for term in terms if term in pairs}
+    monkeypatch.setattr(E5SmallModel, 'prepare_terms', prepare)
+    monkeypatch.setattr(E5SmallModel, 'match_terms', match)
+    monkeypatch.setattr(E5SmallModel, 'rank', lambda *args: pytest.fail('paragraph ranking is not used'))
+    doc_id = 'e5_word_api_doc'
+    assert client.post('/api/v1/search/documents/register', json={
+        'document_id': doc_id, 'blocks': [{
+            'block_id': f'e5word-{page}', 'page': page, 'text': text,
+            'block_type': 'paragraph', 'bbox': [0, 0, 1, 1], 'rects': [],
+        } for page, text in [(1, '소개'), (2, '탐색 제거')]],
+    }).status_code == 201
+    options = client.get('/api/v1/search/options').json()
+    assert options['default_algorithm'] == 'sliding_queue' and options['default_model'] is None
+    assert next(x for x in options['algorithms'] if x['name'] == 'sliding_queue')['supported_models'] == [None, 'e5-small']
+    for model in ('e5-small', None):
+        created = client.post('/api/v1/sessions', json={'document_id': doc_id,
+            'config': {'search_strategy': 'sliding_queue', 'search_model': model, 'word_match_threshold': .92}})
+        assert created.status_code == 201, created.text
+        sid = created.json()['session_id']
+        preview = client.post('/api/v1/search/preview', json={'session_id': sid, 'text': '검색 삭제'}).json()
+        assert preview['model'] == (model or 'none')
+        assert client.get(f'/api/v1/sessions/{sid}/search-state').json()['current_page'] == 1
+        result = client.post('/api/v1/search/live', json={
+            'session_id': sid, 'utterance_id': 'u1', 'sequence': 1, 'is_final': True, 'text': '검색 삭제'})
+        assert result.status_code == 200, result.text
+        assert result.json()['page'] == (2 if model else None)
+        assert result.json()['buffer_words'] == ['검색', '삭제']
+    assert prepared and thresholds and set(thresholds) == {.92}
 
 
 def test_api_missing_session_and_missing_model():
@@ -138,7 +177,7 @@ def test_api_preview_is_provisional_only():
     })
     assert final.status_code == 200
     assert client.get(f'/api/v1/sessions/{session_id}/search-state').json()['buffer_words'] == [
-        '운영체제', '프로세스', '관리',
+        '운영', '체제', '프로세스', '관리',
     ]
 
 
@@ -154,23 +193,23 @@ def test_live_api_updates_actual_search_queue_on_interim():
     created = client.post('/api/v1/sessions', json={'document_id': doc_id,
         'config': {'search_strategy': 'sliding_queue', 'sliding_window_words': 15}})
     sid = created.json()['session_id']
-    for seq, text in enumerate(['운영체제', '운영체제 프로세스'], start=1):
+    for seq, text in enumerate(['운영체제는', '운영체제는 프로세스입니다'], start=1):
         result = client.post('/api/v1/search/live', json={
             'session_id': sid, 'utterance_id': 'utt1',
             'text': text, 'sequence': seq, 'is_final': False,
         })
         assert result.status_code == 200
     result = result.json()
-    assert result['buffer_words'] == ['운영체제', '프로세스']
+    assert result['buffer_words'] == ['운영', '체제', '프로세스']
     state = client.get(f'/api/v1/sessions/{sid}/search-state').json()
-    assert state['buffer_words'] == ['운영체제', '프로세스']
+    assert state['buffer_words'] == ['운영', '체제', '프로세스']
     assert state['current_page'] == 1
     assert client.get(f'/api/v1/sessions/{sid}/timeline').json()['items'] == []
 
     final = client.post('/api/v1/search/live', json={
         'session_id': sid, 'utterance_id': 'utt1',
-        'text': '운영체제 프로세스', 'sequence': 3, 'is_final': True,
+        'text': '운영체제는 프로세스입니다', 'sequence': 3, 'is_final': True,
     })
     assert final.status_code == 200
-    assert final.json()['buffer_words'] == ['운영체제', '프로세스']
+    assert final.json()['buffer_words'] == ['운영', '체제', '프로세스']
     assert len(client.get(f'/api/v1/sessions/{sid}/timeline').json()['items']) == 1

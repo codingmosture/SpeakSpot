@@ -4,8 +4,9 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class SearchSettings:
-    sliding_window_words: int = 15
+    sliding_window_words: int = 8
     local_radius_pages: int = 5
+    word_match_threshold: float = 0.90
     min_match_score: float = 0.34
     backward_penalty: float = 0.08
     stay_bonus: float = 0.025
@@ -25,7 +26,7 @@ class SearchSettings:
             raise ValueError('global_top_k_pages는 1~100이어야 합니다.')
         if not 1 <= self.max_jev_candidates <= 240:
             raise ValueError('max_jev_candidates는 1~240이어야 합니다.')
-        for field in ('min_match_score', 'backward_penalty', 'stay_bonus', 'switch_margin',
+        for field in ('word_match_threshold', 'min_match_score', 'backward_penalty', 'stay_bonus', 'switch_margin',
                       'prefix_bonus', 'min_margin', 'jev_min_confidence'):
             if not 0 <= getattr(self, field) <= 1:
                 raise ValueError(f'{field}는 0~1이어야 합니다.')

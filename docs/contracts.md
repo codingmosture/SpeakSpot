@@ -9,7 +9,7 @@
 
 - 프론트엔드: React + TypeScript, 백엔드: Python + FastAPI를 기준으로 개발한다.
 - 한 저장소에서 `frontend/`, `backend/`, `docs/`, `experiments/`를 관리한다.
-- 모든 데이터 교환은 UTF-8 JSON을 사용한다. 단, PDF 업로드는 `multipart/form-data`, 음성은 WebSocket 바이너리 프레임을 사용한다.
+- 모든 데이터 교환은 UTF-8 JSON을 사용한다. PDF 업로드는 `multipart/form-data`를 사용하며, 음성 인식은 브라우저가 담당한다.
 - **PDF 페이지는 1부터 시작**한다. 예: 첫 페이지 `1`.
 - **모든 PDF 좌표는 페이지의 표시 방향을 기준으로 정규화된 `[x0, y0, x1, y1]`** 형식을 사용한다. 원점은 **왼쪽 위**, 값은 **0~1**이며 `x0 < x1`, `y0 < y1`이다.
 - `block_id`는 **한 document 내에서 유일**해야 한다. 예: `p0005_b0003`. 같은 PDF를 다른 설정으로 재처리한 경우 ID가 달라질 수 있다.
@@ -31,9 +31,9 @@
 |---|---|---|---|
 | 프론트엔드 | PDF, 음성, SearchResult | 렌더링, 하이라이트, 타임라인 | PDF 파싱·AI 판단 로직을 넣지 않는다. |
 | PDF 전처리 | PDF 파일 | Document, Block[] | 텍스트/좌표 추출, 블록 분리, 메타데이터 생성 |
-| STT | 오디오 | STTSegment | 모델별 음성 인식, 발화 구간, 확정 여부 |
+| 브라우저 STT | 마이크 | 인식 텍스트 | 브라우저 음성 인식과 검색 요청 |
 | 탐색 | Document, 발화, 세션 상태 | SearchResult | Local/Global/Hybrid, 후보 점수화, 실패 판단 |
-| API·통합 | HTTP / WebSocket | 규격화된 응답·이벤트 | 업로드, 세션, 저장, 모듈 호출 연결 |
+| API·통합 | HTTP | 규격화된 응답 | 업로드, 검색 세션, 모듈 호출 연결 |
 
 ## 2. 공통 데이터 형식
 
@@ -83,22 +83,10 @@
 3. 두 줄 이상인 블록은 `bbox` 한 개만 색칠하면 빈 공간까지 강조될 수 있으므로 가능하면 `rects`를 사용한다.
 4. PDF 회전·CropBox 등의 영향은 **PDF 처리 담당과 뷰어 담당이 동일 샘플 PDF로 검증**한다. 변환이 필요한 경우 어느 쪽이 보정하는지 합의하고 이 문서를 수정한다.
 
-### 2.3 STTSegment (음성 인식 결과)
+### 2.3 브라우저 음성 인식
 
-```json
-{
-  "segment_id": "seg_000012",
-  "text": "운영체제는 프로세스를 관리합니다.",
-  "start_ms": 12000,
-  "end_ms": 15000,
-  "is_final": true
-}
-```
-
-- `start_ms`, `end_ms`는 **해당 세션에서 오디오 입력을 시작한 시점**을 기준으로 한 밀리초이다.
-- `is_final: false`는 수정될 수 있는 중간 결과, `true`는 확정 결과를 의미한다.
-- 초기 버전에서는 **확정 결과에 대해서만 탐색**한다. 추후 지연 개선 실험에서 중간 결과 탐색을 허용할 수 있다.
-- 같은 `segment_id`의 중간 결과는 갱신될 수 있으며, 확정 결과는 한 번만 처리한다.
+브라우저 Web Speech API가 인식한 텍스트를 프론트에서 검색 API로 전달합니다.
+서버는 오디오를 수신하거나 음성을 인식하지 않습니다.
 
 ### 2.4 SearchResult (탐색 결과·하이라이트 이벤트 공용)
 
@@ -152,16 +140,17 @@
 
 ```json
 {
-  "stt_model": "faster-whisper-small",
   "search_model": "bge-m3",
   "search_strategy": "hybrid",
-  "local_radius_pages": 1,
-  "stt_buffer_seconds": 5,
-  "stt_update_interval_seconds": 2
+  "local_radius_pages": 1
 }
 ```
 
 - `search_model`과 `search_strategy`는 **서로 독립된 설정**이다.
+- `sliding_queue`는 `search_model: null`(기존 비교) 또는 `"e5-small"`(단어 의미 비교)을 지원한다.
+  E5를 선택해도 큐·탐색 반경·점수·전환 방식은 유지하며 문장 전체를 랭킹하지 않는다.
+  `word_match_threshold`는 개별 단어 코사인 유사도의 일치 기준(0~1, 기본 0.90)이다.
+  기존 표기·조사 일치는 이 기준과 관계없이 유지한다.
 - 구현체 이름은 예시이며 실제 설치·검증한 모델만 등록한다.
 - 최초 설정값은 실험으로 변경할 수 있으므로 한 곳(`config.py`)에서 관리한다.
 
@@ -210,12 +199,9 @@
 {
   "document_id": "doc_001",
   "config": {
-    "stt_model": "faster-whisper-small",
     "search_model": "bge-m3",
     "search_strategy": "hybrid",
-    "local_radius_pages": 1,
-    "stt_buffer_seconds": 5,
-    "stt_update_interval_seconds": 2
+    "local_radius_pages": 1
   }
 }
 ```
@@ -271,102 +257,13 @@
 - `time_ms`는 발화 종료 시각을 기준으로 한 세션 내 밀리초이다.
 - 초기에는 성공한 하이라이트 변경만 저장해도 되지만, 평가용 로그에는 `NONE`까지 기록하는 편이 좋다.
 
-## 4. WebSocket 실시간 통신 계약
+## 4. 브라우저 STT와 실시간 검색
 
-연결 주소: `WS /api/v1/sessions/{session_id}/stream`
-
-### 4.1 클라이언트 → 서버
-
-1. 연결 후 다음 JSON으로 음성 포맷을 알린다.
-
-```json
-{
-  "type": "session.start",
-  "payload": {
-    "encoding": "pcm_s16le",
-    "sample_rate": 16000,
-    "channels": 1
-  }
-}
-```
-
-2. 서버가 `session.ready`를 반환하면 **WebSocket 바이너리 프레임**으로 PCM 오디오 청크를 보낸다. 채널은 mono, 샘플은 16-bit signed little-endian, 샘플레이트는 16 kHz로 통일한다.
-3. 녹음을 멈출 때 다음 메시지를 보낸다.
-
-```json
-{
-  "type": "session.stop",
-  "payload": {}
-}
-```
-
-**주의:** 브라우저 마이크의 기본 샘플레이트는 환경에 따라 다르므로 클라이언트에서 변환하거나 서버에서 변환해야 한다. 양측 모두 원본을 16 kHz라고 가정하면 안 된다.
-
-### 4.2 서버 → 클라이언트
-
-연결 준비:
-
-```json
-{
-  "type": "session.ready",
-  "payload": {
-    "session_id": "sess_001"
-  }
-}
-```
-
-STT 결과 (`payload`는 STTSegment):
-
-```json
-{
-  "type": "stt.result",
-  "payload": {
-    "segment_id": "seg_000012",
-    "text": "운영체제는 프로세스를 관리합니다.",
-    "start_ms": 12000,
-    "end_ms": 15000,
-    "is_final": true
-  }
-}
-```
-
-하이라이트 결과 (`payload`는 SearchResult):
-
-```json
-{
-  "type": "highlight.update",
-  "payload": {
-    "status": "MATCH",
-    "document_id": "doc_001",
-    "session_id": "sess_001",
-    "segment_id": "seg_000012",
-    "page": 5,
-    "block_id": "p0005_b0003",
-    "score": 0.87,
-    "strategy": "hybrid",
-    "stage_used": "local",
-    "model": "bge-m3",
-    "processing_ms": 184
-  }
-}
-```
-
-오류 이벤트:
-
-```json
-{
-  "type": "error",
-  "payload": {
-    "code": "STT_FAILED",
-    "message": "음성 인식 처리에 실패했습니다."
-  }
-}
-```
-
-- 실시간 탐색은 처음에는 `stt.result` 중 `is_final: true`인 발화만 사용한다.
-- `highlight.update` 수신 시 프론트는 현재 문서의 블록 ID를 찾아 페이지를 이동하고 `rects`를 강조한다.
-- `NONE` 수신 시 현재 하이라이트를 삭제하지 않는다.
-- WebSocket 재연결·패킷 손실 복구·다중 사용자 동시성은 별도 이슈로 관리한다.
+음성 인식은 브라우저에서 실행합니다. 중간/확정 가설을 `POST /api/v1/search/live`로
+전달하며 `session_id`, `utterance_id`, `sequence`, `text`, `is_final`을 사용합니다.
+응답은 SearchResult에 `buffer_words`, `current_page`, `sequence`를 추가합니다.
+미확정 가설은 교체하고 확정 이벤트는 한 번만 반영합니다. 오디오 업로드와 서버
+STT WebSocket은 제공하지 않습니다. `NONE`이면 기존 하이라이트를 유지합니다.
 
 ## 5. 탐색 모델 교체 계약
 
@@ -439,7 +336,7 @@ HTTP 오류 본문:
 |---|---|
 | 프론트 | 고정 `Block[]`와 `SearchResult`로 페이지 자동 이동·강조가 작동한다. |
 | 문서 처리 | 샘플 PDF에서 `Block[]`를 생성하고 블록 ID, 텍스트, 좌표가 유효하다. |
-| STT | 녹음 파일에서 `STTSegment` 형식의 결과를 만들고 시각·확정 여부를 반환한다. |
+| 브라우저 STT | 인식 텍스트와 중간·확정 여부를 검색 API에 전달한다. |
 | 탐색 | 고정 `Block[]`와 텍스트를 받아 `SearchResult`를 반환한다. |
 | 통합 | PDF 업로드 → 블록 조회 → 텍스트 탐색 → 하이라이트까지 한 번에 동작한다. |
 
@@ -449,7 +346,7 @@ HTTP 오류 본문:
 
 아래는 실험 또는 구현 상황에 따라 결정한다. **이 문서의 필수 계약과 혼동하지 않는다.**
 
-- STT 최종 모델(Whisper 종류, 외부 스트리밍 API 등)
+- 브라우저 음성 인식 지원 범위
 - 탐색 최종 모델 및 `OUT_OF_LOCAL`·`NONE` 판단 임계값
 - Local 검색 범위(±1페이지/±2페이지 등)와 Global 후보 수
 - 오디오 버퍼 길이·갱신 간격, 중간 STT 결과의 탐색 사용 여부

@@ -1,4 +1,4 @@
-import type { EntrySource, TimelineEntry } from '../types/contracts'
+import type { Block, EntrySource, TimelineEntry } from '../types/contracts'
 
 interface Props {
   entries: TimelineEntry[]
@@ -8,7 +8,6 @@ interface Props {
 }
 
 const SOURCE_LABEL: Record<EntrySource, string> = {
-  'server-stt': '서버 음성',
   'browser-stt': '음성',
   manual: '텍스트',
 }
@@ -50,7 +49,7 @@ export function Timeline({ entries, activeId, onSelect, onClear }: Props) {
       )}
 
       {entries.length === 0 ? (
-        <div className="timeline-empty"><p>대화의 흐름을 기록합니다</p><span>음성 인식을 시작하거나 내용을 검색하세요.<br />기록을 선택하면 해당 위치로 이동합니다.</span></div>
+        <div className="timeline-empty"><p>확정된 발화가 여기에 쌓입니다</p><span>음성 인식을 시작해보세요.<br />기록을 선택하면 해당 위치로 이동합니다.</span></div>
       ) : (
         <ol className="timeline-list">
           {[...entries].reverse().map((entry) => {
@@ -89,43 +88,66 @@ export function Timeline({ entries, activeId, onSelect, onClear }: Props) {
 
 const STAGE_LABEL = { sliding_queue: 'Sliding Queue', local: 'Local', global: 'Global', none: '-' } as const
 
-export function ResultCard({ entry }: { entry: TimelineEntry | null }) {
+export function LiveMatchPanel({ entry, words, windowSize, queueEnabled, block, retainedBlock, listening, ready }: {
+  entry: TimelineEntry | null
+  words: string[]
+  windowSize: number
+  queueEnabled: boolean
+  block: Block | null
+  retainedBlock: Block | null
+  listening: boolean
+  ready: boolean
+}) {
   const r = entry?.result
+  const selected = block ?? retainedBlock
+  const status = entry?.pending ? 'pending' : entry?.error ? 'error'
+    : r?.status === 'MATCH' ? 'match' : r ? 'none' : 'idle'
+  const label = { pending: '판단 중', error: '오류', match: '블록 매칭', none: '위치 미확정', idle: '대기 중' }[status]
 
   return (
-    <section className="panel result-card">
-      <h2>최근 탐색 결과</h2>
-      {!entry ? (
-        <p className="muted">아직 탐색한 발화가 없습니다.</p>
-      ) : (
-        <>
-          <blockquote>“{entry.text}”</blockquote>
-          {entry.pending ? (
-            <p className="muted">탐색 중…</p>
-          ) : entry.error ? (
-            <p className="error">{entry.error}</p>
-          ) : r ? (
-            <>
-              {r.status === 'NONE' && (
-                <p className="none-notice">일치하는 위치를 찾지 못했습니다. 이전 하이라이트를 유지합니다.</p>
-              )}
-              <dl className="stats">
-                <Stat label="상태" value={r.status} />
-                <Stat label="페이지" value={r.page ?? '-'} />
-                <Stat label="블록" value={r.block_id ?? '-'} />
-                <Stat label="점수" value={r.score != null ? r.score.toFixed(3) : '-'} />
-                <Stat label="탐색 단계" value={STAGE_LABEL[r.stage_used]} />
-                <Stat label="모델" value={r.model} />
-                <Stat label="탐색 시간" value={`${r.processing_ms} ms`} />
-                <Stat
-                  label={entry.source === 'server-stt' ? 'STT→하이라이트' : '왕복 시간'}
-                  value={entry.roundTripMs != null ? `${entry.roundTripMs} ms` : '-'}
-                />
-              </dl>
-            </>
-          ) : null}
-        </>
-      )}
+    <section className={`panel live-match ${status}`} aria-labelledby="live-match-title">
+      <div className="match-heading">
+        <h2 id="live-match-title">실시간 매칭</h2>
+        <span className={`live-indicator ${listening ? 'listening' : ''}`}>
+          <span className="dot" aria-hidden />{listening ? '듣는 중' : '음성 대기'}
+        </span>
+      </div>
+      {queueEnabled && <div className="match-queue">
+        <div className="match-section-label"><span>{entry?.pending ? '명사 큐 갱신 중' : '비교 중인 명사'}</span><span>{words.length}<small> / {windowSize}</small></span></div>
+        {words.length ? (
+          <ol className="noun-chips" aria-label="실시간 명사 큐">
+            {words.map((word, index) => <li key={`${index}-${word}`}>{word}</li>)}
+          </ol>
+        ) : <p className="queue-empty">말씀하신 명사와 영문 용어가 여기에 표시됩니다.</p>}
+      </div>}
+      <div className="match-decision" aria-live="polite" aria-atomic="true">
+        <div className="match-section-label">
+          <span className={`decision-status ${status}`}><span className="dot" aria-hidden />{label}</span>
+          {r?.score != null && <span className="match-score">점수 {r.score.toFixed(3)}</span>}
+        </div>
+        {selected ? (
+          <div className={`matched-block ${status === 'match' ? 'current' : 'retained'}`}>
+            <div className="matched-block-meta"><span className="page-pill">p.{selected.page}</span>
+              <span>{status === 'match' ? '선택된 블록' : '유지 중인 블록'}</span>
+            </div>
+            <p className="matched-block-text" key={selected.block_id}>{selected.text}</p>
+          </div>
+        ) : <div className="match-placeholder"><span aria-hidden>⌁</span><p>{!ready ? 'PDF를 열어 시작하세요' : listening ? '말씀하시면 문서의 블록을 찾습니다' : '음성 인식을 시작하세요'}</p></div>}
+        {status === 'none' && <p className="match-note">이번 발화로 새 위치가 확정되지 않았습니다.{selected && ' 이전 강조는 유지합니다.'}</p>}
+        {entry?.error && <p className="error">{entry.error}</p>}
+      </div>
+      {entry && <details className="match-details">
+        <summary>탐색 상세</summary>
+        <blockquote>“{entry.text}”</blockquote>
+        {r && <dl className="stats">
+          <Stat label="상태" value={r.status} />
+          <Stat label="블록" value={r.block_id ?? '-'} />
+          <Stat label="탐색 단계" value={STAGE_LABEL[r.stage_used]} />
+          <Stat label="모델" value={r.model} />
+          <Stat label="탐색 시간" value={`${r.processing_ms} ms`} />
+          <Stat label="왕복 시간" value={entry.roundTripMs != null ? `${entry.roundTripMs} ms` : '-'} />
+        </dl>}
+      </details>}
     </section>
   )
 }

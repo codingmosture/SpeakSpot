@@ -1,31 +1,30 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { SessionConfig, SearchStrategy } from '../types/contracts'
-import type { SttSource } from './AppHeader'
 
 interface Props {
   open: boolean
   onClose: () => void
   sttActive: boolean
-  sttSource: SttSource
-  onSttSourceChange: (source: SttSource) => void
-  serverSttAvailable: boolean
-  canSearch: boolean
+  documentReady: boolean
+  sessionError: string | null
+  onStopStt: () => void
   showBlocks: boolean
   onToggleBlocks: (value: boolean) => void
+  autoFollow: boolean
+  onAutoFollowChange: (value: boolean) => void
   sessionConfig: SessionConfig
   onConfigChange: (next: SessionConfig) => void
   onApplyConfig: () => void
   configBusy: boolean
   configDirty: boolean
-  liveWords: string[]
   sttApplyMode: 'realtime' | '1s' | '2s' | 'sentence'
   onSttApplyModeChange: (mode: 'realtime' | '1s' | '2s' | 'sentence') => void
 }
 
 export function DeveloperPanel({
-  open, onClose, sttActive, sttSource, onSttSourceChange, serverSttAvailable,
-  canSearch, showBlocks, onToggleBlocks, sessionConfig, onConfigChange,
-  onApplyConfig, configBusy, configDirty, liveWords, sttApplyMode, onSttApplyModeChange,
+  open, onClose, sttActive,
+  documentReady, sessionError, onStopStt, showBlocks, onToggleBlocks, autoFollow, onAutoFollowChange, sessionConfig, onConfigChange,
+  onApplyConfig, configBusy, configDirty, sttApplyMode, onSttApplyModeChange,
 }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   useEffect(() => {
@@ -44,6 +43,10 @@ export function DeveloperPanel({
     onConfigChange({ ...sessionConfig, [key]: value })
   const algorithm = sessionConfig.search_strategy
   const semantic = algorithm !== 'sliding_queue'
+  const choice = semantic && sessionConfig.search_model === 'jev'
+  const ranked = !choice
+  const local = algorithm !== 'global'
+  const globalPages = algorithm === 'hybrid2' || (choice && algorithm !== 'local')
 
   return (
     <dialog ref={dialogRef} id="developer-panel" className="developer-drawer"
@@ -61,84 +64,61 @@ export function DeveloperPanel({
       </div>
       <div className="drawer-body">
         <p className="hint" id="developer-description">세션 설정을 적용하면 타임라인이 초기화되고 새 검색 세션이 시작됩니다. PDF는 유지됩니다.</p>
-        <p className="hint">STT 소스, 검색 반영 주기, 블록 경계 표시는 변경 즉시 적용됩니다.</p>
+        <p className="hint">검색 반영 주기·블록 경계·자동 페이지 이동은 변경 즉시 적용됩니다.</p>
         <h3>검색 · 음성 인식</h3>
-        <label className="field">
-          검색 알고리즘
-          <select value={algorithm} disabled={sttActive || configBusy}
-            onChange={(e) => {
-              const strategy = e.target.value as SearchStrategy
-              onConfigChange({
-                ...sessionConfig,
-                search_strategy: strategy,
-                search_model: strategy === 'sliding_queue' ? null : (sessionConfig.search_model ?? 'e5-small'),
-              })
-            }}>
-            <option value="sliding_queue">슬라이딩 큐 (기본)</option>
-            <option value="local">Local</option>
-            <option value="global">Global</option>
-            <option value="hybrid1">Hybrid 1</option>
-            <option value="hybrid2">Hybrid 2</option>
-          </select>
-        </label>
-        <label className="field">
-          검색 모델
-          <select value={sessionConfig.search_model ?? 'none'} disabled={!semantic || sttActive || configBusy}
-            onChange={(e) => changeConfig('search_model', e.target.value)}>
-            <option value="none" disabled>사용 안 함 (슬라이딩 큐)</option>
-            <option value="e5-small">E5-small</option>
-            <option value="bge-m3">BGE-M3</option>
-            <option value="jev">Jev (API 키 필요)</option>
-          </select>
-        </label>
-        <label className="field">STT 소스
-          <select value={sttSource} disabled={sttActive || configBusy}
-            onChange={(e) => onSttSourceChange(e.target.value as SttSource)}>
-            <option value="browser">브라우저 STT (기본)</option>
-            <option value="server" disabled={!serverSttAvailable}>서버 STT (Whisper)</option>
-          </select>
-        </label>
-        <label className="field">
-          STT → 검색 큐 반영 주기
-          <select value={sttApplyMode}
-            onChange={(e) => onSttApplyModeChange(e.target.value as typeof sttApplyMode)}>
-            <option value="realtime">0초 · 실시간 (기본)</option>
-            <option value="1s">1초마다</option>
-            <option value="2s">2초마다</option>
-            <option value="sentence">문장마다 (확정 시)</option>
-          </select>
-          <small className="hint">브라우저 STT가 인식 결과를 전달한 뒤 검색에 반영하는 주기입니다. 자막은 항상 즉시 표시됩니다. 서버 Whisper에는 적용되지 않습니다.</small>
-        </label>
-        <label className="field">서버 STT 모델
-          <select value={sessionConfig.stt_model} disabled={sttActive || configBusy}
-            onChange={(e) => changeConfig('stt_model', e.target.value)}>
-            <option value="faster-whisper-tiny">Faster Whisper tiny</option>
-            <option value="faster-whisper-base">Faster Whisper base</option>
-            <option value="faster-whisper-small">Faster Whisper small</option>
-            <option value="faster-whisper-medium">Faster Whisper medium</option>
-          </select>
-        </label>
+        {sttActive && (
+          <div className="dev-status">
+            <p className="hint">음성 인식 중입니다. 설정 적용은 인식을 중지한 뒤 사용할 수 있습니다.</p>
+            <button type="button" className="btn ghost" onClick={onStopStt}>음성 인식 중지</button>
+          </div>
+        )}
+        <SettingSelect label="검색 알고리즘" value={algorithm} disabled={configBusy}
+          options={[
+            ['sliding_queue', '슬라이딩 큐 (기본)'], ['local', 'Local'], ['global', 'Global'],
+            ['hybrid1', 'Hybrid 1'], ['hybrid2', 'Hybrid 2'],
+          ]}
+          onChange={(value) => onConfigChange({
+            ...sessionConfig, search_strategy: value as SearchStrategy,
+            search_model: value === 'sliding_queue'
+              ? (sessionConfig.search_model === 'e5-small' ? 'e5-small' : null)
+              : (sessionConfig.search_model ?? 'e5-small'),
+          })} />
+        <SettingSelect label="검색 모델" value={sessionConfig.search_model ?? 'none'}
+          disabled={configBusy}
+          options={[
+            ...(!semantic ? [['none', '사용 안 함 (기존 단어 비교)']] as const : []),
+            ['e5-small', semantic ? 'E5-small' : 'E5-small · 단어 의미 비교'],
+            ...(semantic ? [['bge-m3', 'BGE-M3'], ['jev', 'Jev (API 키 필요)']] as const : []),
+          ]}
+          hint={!semantic ? 'E5를 선택하면 발화 단어와 문서 단어의 의미 유사도로 일치를 판단합니다. 슬라이딩 큐 방식은 유지됩니다.' : undefined}
+          onChange={(value) => changeConfig('search_model', value === 'none' ? null : value)} />
+        <SettingSelect label="음성 인식 → 검색 반영 주기" value={sttApplyMode}
+          options={[
+            ['realtime', '0초 · 실시간 (기본)'], ['1s', '1초마다'],
+            ['2s', '2초마다'], ['sentence', '문장마다 (확정 시)'],
+          ]}
+          hint="자막은 즉시 표시하며 선택한 주기에 따라 검색에 반영합니다."
+          onChange={(value) => onSttApplyModeChange(value as typeof sttApplyMode)} />
         <div className="dev-numeric-grid">
           {([
-            ['sliding_window_words', '큐 길이 (단어)', 1, 100, 1],
-            ['local_radius_pages', '탐색 반경 (페이지)', 0, 20, 1],
-            ['min_match_score', '최소 매칭 점수', 0, 1, 0.01],
-            ['backward_penalty', '뒤로 이동 감점', 0, 1, 0.01],
-            ['stay_bonus', '현재 페이지 보너스', 0, 1, 0.005],
-            ['switch_margin', '페이지 전환 임계차', 0, 1, 0.01],
-            ['prefix_bonus', '블록 앞부분 가중치', 0, 1, 0.005],
-            ['min_margin', '후보 최소 점수차', 0, 1, 0.01],
-            ['global_top_k_pages', 'Global 후보 페이지 수', 1, 100, 1],
-            ['jev_min_confidence', 'Jev 최소 신뢰도', 0, 1, 0.05],
-            ['max_jev_candidates', 'Jev 최대 후보 블록', 1, 240, 1],
-            ['stt_buffer_seconds', '서버 Whisper 음성 버퍼 (초)', 1, 30, 0.5],
-            ['stt_update_interval_seconds', '서버 Whisper 갱신 간격 (초)', 0.2, 10, 0.2],
-          ] as const).map(([key, label, min, max, step]) => (
+            ['sliding_window_words', '큐 길이 (명사·영문 용어)', 1, 100, 1, !semantic],
+            ['local_radius_pages', '탐색 반경 (페이지)', 0, 20, 1, local],
+            ['word_match_threshold', 'E5 단어 일치 기준', 0, 1, 0.01, !semantic && sessionConfig.search_model === 'e5-small'],
+            ['min_match_score', '최소 매칭 점수', 0, 1, 0.01, ranked],
+            ['backward_penalty', '뒤로 이동 감점', 0, 1, 0.01, ranked],
+            ['stay_bonus', '현재 페이지 보너스', 0, 1, 0.005, ranked],
+            ['switch_margin', '페이지 전환 임계차', 0, 1, 0.01, ranked],
+            ['prefix_bonus', '블록 앞부분 가중치', 0, 1, 0.005, !semantic],
+            ['min_margin', '후보 최소 점수차', 0, 1, 0.01, semantic && ranked],
+            ['global_top_k_pages', 'Global 후보 페이지 수', 1, 100, 1, globalPages],
+            ['jev_min_confidence', 'Jev 최소 신뢰도', 0, 1, 0.05, choice],
+            ['max_jev_candidates', 'Jev 최대 후보 블록', 1, 240, 1, choice],
+          ] as const).filter(([, , , , , visible]) => visible).map(([key, label, min, max, step]) => (
             <label className="field" key={key}>
               {label}
               <input type="number" min={min} max={max} step={step}
                 value={sessionConfig[key] ?? 0}
-                disabled={sttActive || configBusy}
+                disabled={configBusy}
                 onChange={(e) => {
                   const n = e.target.valueAsNumber
                   if (Number.isFinite(n)) changeConfig(key, Math.max(min, Math.min(max, n)))
@@ -147,18 +127,19 @@ export function DeveloperPanel({
           ))}
         </div>
         <div className="config-apply">
+          {sessionError && <p className="error" role="alert">{sessionError} 설정을 바꿔 다시 적용할 수 있습니다.</p>}
           <p className="hint">
             {configBusy
               ? '새 검색 세션을 준비하고 있습니다.'
-              : !canSearch
-                ? '문서가 준비되면 설정을 적용할 수 있습니다.'
+              : !documentReady
+                ? '설정을 저장하면 PDF 업로드 시 적용됩니다.'
                 : configDirty
                   ? '변경한 설정이 아직 적용되지 않았습니다.'
-                  : '현재 세션 설정과 같습니다.'}
+                  : '현재 설정과 같습니다.'}
           </p>
           <button type="button" className="btn primary" onClick={onApplyConfig}
-            disabled={!configDirty || configBusy || sttActive || !canSearch}>
-            {configBusy ? '새 세션 생성 중…' : '설정 적용 · 세션 다시 시작'}
+            disabled={(!configDirty && !sessionError) || configBusy || sttActive}>
+            {configBusy ? '설정 준비 중…' : documentReady ? '설정 적용 · 세션 다시 시작' : '설정 저장'}
           </button>
         </div>
         <h3>진단</h3>
@@ -167,11 +148,73 @@ export function DeveloperPanel({
             onChange={(e) => onToggleBlocks(e.target.checked)} />
           블록 경계 표시
         </label>
-        <div className="dev-queue">
-          <strong>실시간 단어 큐 ({liveWords.length}/{sessionConfig.sliding_window_words ?? 15})</strong>
-          <p>{liveWords.length ? liveWords.join(' · ') : '마이크를 켜면 최근 단어가 표시됩니다.'}</p>
-        </div>
+        <label className="toggle">
+          <input type="checkbox" checked={autoFollow}
+            onChange={(event) => onAutoFollowChange(event.target.checked)} />
+          매칭 위치로 자동 페이지 이동
+        </label>
       </div>
     </dialog>
+  )
+}
+
+
+type SelectOption = readonly [value: string, label: string, disabled?: boolean]
+
+/** Render options inside the dialog; native select popups can fail in embedded browsers. */
+function SettingSelect({ label, value, options, onChange, disabled = false, hint }: {
+  label: string; value: string; options: readonly SelectOption[]
+  onChange: (value: string) => void; disabled?: boolean; hint?: string
+}) {
+  const id = useId()
+  const [expanded, setExpanded] = useState(false)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const list = useRef<HTMLDivElement>(null)
+  const visible = expanded && !disabled
+  const close = () => { setExpanded(false); trigger.current?.focus() }
+
+  useEffect(() => {
+    if (visible) {
+      const selected = list.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]:not(:disabled)')
+      const target = selected ?? list.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')
+      target?.focus()
+    }
+  }, [visible])
+
+  return (
+    <div className="field">
+      <span id={`${id}-label`}>{label}</span>
+      <div className="setting-select"
+        onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setExpanded(false) }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape' && visible) { event.preventDefault(); event.stopPropagation(); close(); return }
+          if (event.key === 'Tab' && visible) { close(); return }
+          if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+          event.preventDefault()
+          if (!visible) { setExpanded(true); return }
+          const buttons = Array.from(list.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])
+          const current = buttons.indexOf(document.activeElement as HTMLButtonElement)
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+            : (current + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
+          buttons[next]?.focus()
+        }}>
+        <button ref={trigger} type="button" className="select-trigger" role="combobox"
+          aria-labelledby={`${id}-label`} aria-controls={`${id}-options`} aria-expanded={visible}
+          aria-haspopup="listbox" disabled={disabled} onClick={() => setExpanded(!visible)}>
+          {options.find(([key]) => key === value)?.[1] ?? value}<span aria-hidden>⌄</span>
+        </button>
+        {visible && (
+          <div ref={list} id={`${id}-options`} className="select-options" role="listbox" aria-labelledby={`${id}-label`}>
+            {options.map(([key, text, unavailable]) => (
+              <button key={key} type="button" role="option" tabIndex={-1} aria-selected={value === key}
+                className="select-option" disabled={unavailable} onClick={() => { onChange(key); close() }}>
+                {text}<span aria-hidden>{value === key ? '✓' : ''}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {hint && <small className="hint">{hint}</small>}
+    </div>
   )
 }

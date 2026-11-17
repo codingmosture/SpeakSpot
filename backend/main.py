@@ -20,7 +20,7 @@ class Speech(BaseModel):
 
 @app.get('/api/health')
 def health():
-    return {'service':'SpeakSpot2', 'status':'ok'}
+    return {'service':'SpeakSpot', 'status':'ok'}
 
 @app.post('/api/documents')
 async def upload(file: UploadFile = File(...)):

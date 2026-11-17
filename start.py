@@ -16,7 +16,7 @@ def ready(url, name):
     try:
         with urlopen(url,timeout=1) as response:
             text = response.read().decode('utf-8')
-            return json.loads(text).get('service') == name if name == 'SpeakSpot2' else '<title>SpeakSpot2</title>' in text and '/@vite/client' in text
+            return json.loads(text).get('service') == name if name == 'SpeakSpot' else '<title>SpeakSpot</title>' in text and '/@vite/client' in text
     except Exception:
         return False
 
@@ -32,9 +32,9 @@ def main():
         raise RuntimeError('Install dependencies using README.md first.')
     started = []
     try:
-        services = [('backend',8001,'http://127.0.0.1:8001/api/health','SpeakSpot2',
-                     [str(python),'-m','uvicorn','main:app','--host','127.0.0.1','--port','8001']),
-                    ('frontend',5175,'http://127.0.0.1:5175/','frontend',[pnpm,'dev'])]
+        services = [('backend',8000,'http://127.0.0.1:8000/api/health','SpeakSpot',
+                     [str(python),'-m','uvicorn','main:app','--host','127.0.0.1','--port','8000']),
+                    ('frontend',5173,'http://127.0.0.1:5173/','frontend',[pnpm,'dev'])]
         for folder,port,url,name,command in services:
             if ready(url,name):
                 print(f'{folder}: already running',flush=True)
@@ -44,7 +44,7 @@ def main():
             if os.name == 'nt':
                 invocation = '& ' + ' '.join("'" + part.replace("'", "''") + "'" for part in command)
                 process = subprocess.Popen(['powershell.exe','-NoLogo','-NoProfile','-NoExit','-Command',
-                    f"$Host.UI.RawUI.WindowTitle = 'SpeakSpot2 {folder}'; {invocation}"],
+                    f"$Host.UI.RawUI.WindowTitle = 'SpeakSpot {folder}'; {invocation}"],
                     cwd=ROOT/folder,creationflags=subprocess.CREATE_NEW_CONSOLE)
             else:
                 process = subprocess.Popen(command,cwd=ROOT/folder)
@@ -62,8 +62,8 @@ def main():
                     process.terminate()
         raise
     if '--no-browser' not in sys.argv:
-        webbrowser.open('http://127.0.0.1:5175')
-    print('SpeakSpot2: http://127.0.0.1:5175',flush=True)
+        webbrowser.open('http://127.0.0.1:5173')
+    print('SpeakSpot: http://127.0.0.1:5173',flush=True)
     print('Logs appear in the backend/frontend server windows. Close a server window to stop it.',flush=True)
 
 if __name__ == '__main__':

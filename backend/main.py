@@ -39,7 +39,7 @@ async def upload(file: UploadFile = File(...)):
             except Exception as exc:
                 raise HTTPException(422, str(exc) if isinstance(exc,ValueError) else 'PDF를 읽지 못했습니다.') from exc
             try:
-                search = Search(blocks)
+                search = Search(blocks, page_count=pages)
             except ValueError as exc:
                 raise HTTPException(422, str(exc)) from exc
             except Exception as exc:
@@ -51,6 +51,20 @@ async def upload(file: UploadFile = File(...)):
             return {'id':doc_id, 'name':file.filename, 'pages':pages,
                     'blocks':[{'id':b.block_id,'page':b.page,'rects':b.rects} for b in blocks]}
     return await run_in_threadpool(prepare)
+
+class PageCorrection(BaseModel):
+    page: int = Field(ge=1, strict=True)
+
+@app.post('/api/documents/{doc_id}/page')
+def correct_page(doc_id: str, body: PageCorrection):
+    search = documents.get(doc_id)
+    if search is None:
+        raise HTTPException(404, '문서를 다시 열어주세요.')
+    try:
+        search.correct_page(body.page)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {'page': body.page}
 
 @app.post('/api/documents/{doc_id}/speech')
 def speech(doc_id: str, body: Speech):

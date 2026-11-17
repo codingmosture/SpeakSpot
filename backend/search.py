@@ -95,8 +95,9 @@ class _QueryScores:
     weight: float = 0.0
 
 class Search:
-    def __init__(self, blocks):
+    def __init__(self, blocks, page_count=None):
         self.blocks = tuple(blocks)
+        self.page_count = page_count if page_count is not None else max((block.page for block in self.blocks), default=1)
         self.current_page = 1
         self.lock = RLock()
         self.sequence = -1
@@ -129,6 +130,15 @@ class Search:
             scores = self._vectors @ vector
             result[term] = frozenset(word for i,word in enumerate(self._vocabulary) if scores[i] >= .90)
         return result
+
+    def correct_page(self, page):
+        """Apply user navigation without dropping speech words or deduplication state."""
+        with self.lock:
+            if not 1 <= page <= self.page_count:
+                raise ValueError('문서 범위 안의 페이지를 선택해주세요.')
+            self.current_page = page
+            self._stream_anchor = page
+            self._clear_pending()
 
     def update(self, text, is_final, utterance_id, sequence):
         with self.lock:

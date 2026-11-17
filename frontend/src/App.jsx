@@ -91,9 +91,11 @@ function App() {
   const [page, setPage] = useState(1), [highlight, setHighlight] = useState(null)
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [caption, setCaption] = useState('')
   const [follow, setFollow] = useState(true), [showBlocks, setShowBlocks] = useState(false)
+  const [correctViewerPage, setCorrectViewerPage] = useState(false)
+  const correctionRef = useRef(false), viewerPageRef = useRef(1)
   const followRef = useRef(true)
   const input = useRef(null), currentDocument = useRef(null), currentPdf = useRef(null)
-  const work = useRef({ queue: [], sending: false, sequence: 0, generation: 0 })
+  const work = useRef({ queue: [], sending: false, sequence: 0, generation: 0, revision: 0 })
   async function flush() {
     const state = work.current
     if (state.sending) return
@@ -103,16 +105,27 @@ function App() {
         const update = state.queue.shift(), doc = currentDocument.current, generation = state.generation
         if (!doc) continue
         try {
+          if (update.kind === 'page') {
+            await request(`documents/${doc.id}/page`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ page: update.page }),
+            })
+            if (generation === state.generation && update.revision === state.revision) setError('')
+            continue
+          }
           const result = await request(`documents/${doc.id}/speech`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update),
           })
-          if (generation !== state.generation || doc !== currentDocument.current) continue
+          if (generation !== state.generation || doc !== currentDocument.current || update.revision !== state.revision) continue
           if (result.block_id) {
             setHighlight(doc.blocks.find(block => block.id === result.block_id) || null)
-            if (followRef.current) setPage(result.page)
+            if (followRef.current) {
+              viewerPageRef.current = result.page
+              setPage(result.page)
+            }
           }
           setError('')
-        } catch (err) { if (generation === state.generation) setError(err.message) }
+        } catch (err) { if (generation === state.generation && update.revision === state.revision) setError(err.message) }
       }
     } finally { state.sending = false }
   }
@@ -120,8 +133,8 @@ function App() {
     setCaption(update.text)
     if (!currentDocument.current) return
     const state = work.current
-    state.queue = state.queue.filter(item => item.is_final || item.utterance_id !== update.utterance_id)
-    state.queue.push({ ...update, sequence: ++state.sequence })
+    state.queue = state.queue.filter(item => item.kind === 'page' || item.is_final || item.utterance_id !== update.utterance_id)
+    state.queue.push({ ...update, sequence: ++state.sequence, revision: state.revision })
     void flush()
   }
   const speech = useSpeech(onSpeech, setError)
@@ -142,6 +155,7 @@ function App() {
       void currentPdf.current?.destroy()
       currentPdf.current = loaded
       currentDocument.current = doc
+      viewerPageRef.current = 1
       setPdf(loaded); setDocument(doc); setPage(1); setHighlight(null); setCaption('')
     } catch (err) {
       if (!loaded) void loading?.destroy()
@@ -152,7 +166,31 @@ function App() {
   function changeFollow(enabled) {
     followRef.current = enabled
     setFollow(enabled)
-    if (enabled && highlight) setPage(highlight.page)
+    if (enabled && highlight) {
+      viewerPageRef.current = highlight.page
+      setPage(highlight.page)
+    }
+  }
+  function correctPage(next) {
+    if (!currentDocument.current) return
+    const state = work.current
+    const revision = ++state.revision
+    // Serialize corrections with speech; ignore results started before this correction.
+    if (state.queue.at(-1)?.kind === 'page') state.queue.pop()
+    state.queue.push({ kind: 'page', page: next, revision })
+    setHighlight(null)
+    void flush()
+  }
+  function changeViewerPage(next) {
+    if (next === viewerPageRef.current) return
+    viewerPageRef.current = next
+    setPage(next)
+    if (correctionRef.current) correctPage(next)
+  }
+  function changeCorrection(enabled) {
+    correctionRef.current = enabled
+    setCorrectViewerPage(enabled)
+    if (enabled) correctPage(viewerPageRef.current)
   }
   return <div className="app">
     <header>
@@ -178,16 +216,18 @@ function App() {
         <div className="document-tools">
           <label className="viewer-toggle"><input type="checkbox" checked={follow}
             onChange={event => changeFollow(event.target.checked)} />발화 따라가기</label>
+          <label className="viewer-toggle" title="켜면 지금 보고 있는 PDF 페이지를 검색 기준으로 사용합니다."><input type="checkbox" checked={correctViewerPage}
+            disabled={!document || busy} onChange={event => changeCorrection(event.target.checked)} />뷰어 페이지로 보정</label>
           <label className="viewer-toggle"><input type="checkbox" checked={showBlocks}
             onChange={event => setShowBlocks(event.target.checked)} />블럭 경계 표시</label>
           <nav aria-label="페이지 이동">
-            <button disabled={!document || page === 1} onClick={() => setPage(page-1)} aria-label="이전 페이지">▲</button>
+            <button disabled={!document || page === 1} onClick={() => changeViewerPage(page-1)} aria-label="이전 페이지">▲</button>
             <span>{document ? `${page} / ${document.pages}` : '—'}</span>
-            <button disabled={!document || page === document.pages} onClick={() => setPage(page+1)} aria-label="다음 페이지">▼</button>
+            <button disabled={!document || page === document.pages} onClick={() => changeViewerPage(page+1)} aria-label="다음 페이지">▼</button>
           </nav>
         </div>
       </div>
-      {pdf ? <Viewer pdf={pdf} page={page} onPage={setPage} highlight={highlight}
+      {pdf ? <Viewer pdf={pdf} page={page} onPage={changeViewerPage} highlight={highlight}
         boundaries={showBlocks ? document.blocks : []} />
         : <div className="empty"><div className="paper-icon" aria-hidden />
           <h1>문서를 업로드 해주세요.</h1><p>PDF를 열고 음성 인식을 시작하면<br />말씀하시는 내용으로 문서가 이동합니다.</p>

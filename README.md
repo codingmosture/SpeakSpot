@@ -1,156 +1,84 @@
-# SpeakSpot
+# SpeakSpot2
 
-브라우저에서 인식한 발화로 PDF의 설명 위치를 찾고 해당 블록과 페이지를 강조합니다.
+PDF를 열고 말하면 해당 내용이 있는 페이지와 블록을 강조합니다.
 
-**기본 동작:** 브라우저 한국어 STT + Sliding Queue(최근 명사·영문 용어 8개, 현재 페이지 ±5).
-PDF 텍스트·한국어/영어 OCR, 회전 좌표, 그림/표/불릿, 타임라인과 자동 페이지 이동을 지원합니다.
-개발자 메뉴에서 Local/Global/Hybrid1·2,
-E5-small/BGE-M3/Jev, 검색 가중치와 발화 반영 주기를 선택할 수 있습니다.
-슬라이딩 큐에서도 E5-small을 선택해 발화 단어와 PDF 단어의 의미 유사도로 일치를 판정할 수 있습니다.
+화면에는 PDF 업로드, 음성 인식, 페이지 이동과 현재 발화만 남겼습니다.
+뷰어 위 자막 왼쪽에 음성 인식 버튼, 문서 이름 옆에 PDF 업로드 버튼을 둡니다.
+페이지 표시 왼쪽의 **발화 따라가기**는 기본으로 체크되어 있습니다.
+체크를 풀면 음성 인식·매칭은 계속하면서 자동 페이지 이동만 멈추고,
+다시 체크하면 최근 매칭 페이지로 돌아가 따라가기를 재개합니다.
+옆의 **블럭 경계 표시**를 체크하면 각 PDF 블록의 범위를 점선 테두리로 표시합니다. 기본은 꺼짐입니다.
+검색은 **명사 8개 슬라이딩 큐 + multilingual E5-small**로 고정합니다.
+큐는 내부 검색 상태로만 사용하고 화면에는 표시하지 않습니다.
+타임라인·개발자 메뉴·모델 선택·수동 검색·Mock/Legacy API·실험/테스트 코드는 없습니다.
+PDF의 원본 텍스트 추출, 구조 분석, 한국어·영어 OCR은 Docling으로 처리합니다.
 
-검색 큐에는 Kiwi로 추출한 일반명사·고유명사와 영문 용어/식별자만 넣습니다.
-조사·어미·동사·형용사·대명사·의존명사·단독 숫자는 제외하고, 기본 8개를 넘으면
-오래된 명사부터 빠집니다. 새 명사는 비교 결과를 캐시하고 빠진 명사의 점수 기여분은
-제거합니다. E5는 단어 의미 비교를 보조하며 음성 인식 원문을 교정하지 않습니다.
-PDF에서 누락된 한글 공백은 실제 글자 간격을 읽어 추출 단계에서 복원합니다.
+## 설치
 
-## 설치와 실행
-
-프로젝트 루트에서 시작하는 Windows PowerShell 기준입니다. Node.js 22 이상과 pnpm,
-Python 3.11 이상을 사용합니다. 기존 가상환경이 있으면 생성 명령은 생략합니다.
-
-```powershell
-cd backend
-py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe scripts/setup_ocr.py
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
-```
-
-**설치 목록은 `backend/requirements.txt` 하나입니다.** API·PDF·검색 모델·테스트 도구를 모두 포함합니다. OCR 언어 파일은 `backend/.cache/tessdata/`에 별도 설치되며 Git에 포함되지 않습니다. PyMuPDF 내장 OCR을 사용하므로 Tesseract 실행 파일을 별도로 설치할 필요는 없습니다.
-
-별도 터미널의 프로젝트 루트에서 프론트를 실행합니다.
+Python 3.11 이상과 Node.js 22 이상, pnpm이 필요합니다.
+프로젝트 루트에서 Windows PowerShell 기준:
 
 ```powershell
+python -m venv backend/.venv
+backend/.venv/Scripts/python.exe -m pip install -r backend/requirements.txt
+$env:HF_HUB_DISABLE_XET = "1"
+backend/.venv/Scripts/python.exe backend/pdf.py
 cd frontend
 pnpm install
+```
+
+## 실행
+
+루트의 **SpeakSpot2.cmd**를 더블클릭합니다.
+백엔드는 이 폴더의 가상환경, 프론트는 `pnpm dev`로 실행합니다.
+**SpeakSpot2 backend**, **SpeakSpot2 frontend** 서버 창이 각각 열리고 로그가 그 창에 바로 표시됩니다.
+실행용 첫 CMD 창이 닫혀도 두 서버 창은 남아 있습니다. 서버 창을 닫으면 해당 서버가 종료됩니다.
+서버 실행이 실패해도 창은 남아 있어 오류를 확인할 수 있습니다.
+접속 주소는 **http://127.0.0.1:5175**, 백엔드는 8001 포트입니다.
+기존 SpeakSpot과 포트가 겹치지 않습니다. 이미 켜져 있으면 재사용합니다.
+브라우저 없이 서버만 켜려면 `python start.py --no-browser`를 실행합니다.
+별도의 로그 파일은 저장하지 않습니다.
+
+수동 실행은 각각 별도 터미널에서:
+
+```powershell
+# backend 폴더
+.venv/Scripts/python.exe -m uvicorn main:app --host 127.0.0.1 --port 8001
+# frontend 폴더
 pnpm dev
 ```
 
-### Windows 한 번에 실행
+브라우저 음성 인식은 Chrome/Edge와 마이크 권한이 필요합니다.
+설치 마지막 단계의 `python backend/pdf.py`는 PDF 레이아웃·표·한국어/영어 OCR·E5 모델을 준비합니다.
+직접 학습하거나 API 키를 등록할 필요는 없습니다. 모델 다운로드에는 인터넷 연결이 필요하고,
+이후에는 로컬 캐시를 재사용합니다. OCR용 Tesseract 설치와 tessdata 파일은 사용하지 않습니다.
+PDF 분석은 업로드할 때 한 번 수행하며, 큰 문서나 스캔 문서는 준비 시간이 더 걸릴 수 있습니다.
+PDF는 서버 메모리에서 처리하며 원본을 별도로 저장하지 않습니다.
+백엔드를 재시작하면 PDF를 다시 열어야 합니다. 파일 제한은 40 MB입니다.
+E5는 단어 의미를 비교하며 음성 인식 문장을 교정하지 않습니다.
 
-설치가 끝난 Windows 환경에서는 루트의 **[`SpeakSpot.cmd`](SpeakSpot.cmd)를 더블클릭**하면 됩니다.
-`Start-SpeakSpot.ps1`이 `backend/.venv/Scripts/python.exe`로 Uvicorn을 실행하고,
-`frontend`에서 `pnpm dev`를 실행한 뒤 준비가 끝나면 브라우저를 엽니다.
-서버는 백그라운드에서 실행되며, 이미 실행 중이면 재사용합니다. 다른 프로그램이
-8000/5173 포트를 점유하면 종료시키지 않고 오류를 안내합니다.
-로그는 `.cache/launcher/`에 저장합니다. 가상환경·의존성이 없으면 먼저 위 설치를 진행하세요.
-실행기는 `http://127.0.0.1:5173`을 열며 브라우저를 닫아도 서버는 계속 실행됩니다.
-브라우저 없이 서버만 준비하려면 다음 명령을 사용합니다.
+## 검색과 PDF 처리
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-SpeakSpot.ps1 -NoBrowser
-```
+- 검색 알고리즘과 가중치는 PDF 처리 변경 전의 슬라이딩 큐 + E5 구현을 유지합니다.
+- KIWI의 명사 추출, 기존 단어 제외·조사 차이 처리와 참조 발화 이동 억제 규칙을 사용합니다.
+- 최종 발화는 한 번만 큐에 반영하고 중간 발화는 교체합니다. 최신 명사 8개를 유지합니다.
+- 단어 일치에는 기존 E5 코사인 유사도 `0.90` 기준과 문서 빈도(IDF)를 사용합니다.
+- 큐에 추가·제거된 단어만 누적 점수를 갱신합니다. 기존 단어의 벡터 비교 결과는 캐시를 재사용합니다.
+- 큐 점수와 최신 발화 점수는 `1:2`, 블록 점수와 페이지 점수는 `25:75` 비중으로 결합합니다.
+- 현재 페이지 가산점 `0.025`, 이전 페이지 감점, 거리 감점, 블록 앞부분 일치 가산점과 반복 단어 가중치를 유지합니다.
+- 탐색 범위는 발화 기준 페이지의 앞뒤 5페이지입니다. 최소 점수 `0.34`, 현재 페이지와의 점수 차이 `0.05`,
+  먼 페이지 이동 조건과 중간·최종 발화의 이동 확정 조건도 기존 값을 유지합니다.
+- PDF에서 추출한 블록의 상위 키워드 5개와 키워드 빈도 가중치도 기존 방식으로 검색에 반영합니다.
+- PDF의 제목·본문·목록·표와 읽기 순서는 사전 학습된 Docling 모델이 구분합니다.
+  제목과 설명을 글자 크기·들여쓰기 수치로 강제 병합하지 않습니다.
+- 페이지 머리말·꼬리말은 모델의 분류와 페이지 간 반복 패턴으로 제외합니다.
+  본문의 숫자를 페이지 위치만으로 삭제하지 않습니다. 강조 좌표는 추출 항목의 원본 좌표를 사용합니다.
 
-- 앱: [localhost:5173](http://localhost:5173)
-- API: [127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-- 상태: [127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health)
+## 코드
 
-macOS/Linux에서는 `python3 -m venv .venv`, `.venv/bin/python`을 사용합니다.
-
-## 사용과 설정
-
-1. PDF 뷰어 위의 업로드 버튼 → 파일명 표시 → OCR/텍스트 처리와 검색 세션 생성
-2. 마이크 인식 → 실시간 매칭 패널에서 명사 큐·판단 상태·블록 본문·페이지·점수 확인
-3. 그 아래 타임라인에서 확정된 발화를 선택 → 해당 위치로 이동
-4. 개발자 메뉴 → 블록 경계 표시 아래에서 자동 페이지 이동 설정
-5. 검색/STT 설정 적용 → 새 세션을 만들고 큐·이력 초기화
-
-실시간 패널은 중간 인식부터 **판단 중 / 블록 매칭 / 위치 미확정**을 갱신합니다.
-선택된 블록의 본문·페이지·점수를 바로 볼 수 있고, 새 위치가 확정되지 않으면
-유지 중인 블록을 구분해 표시합니다. 타임라인에는 확정된 발화가 기록됩니다.
-일반 화면의 수동 텍스트 검색은 제거했으며 직접 텍스트 검색 API는 유지합니다.
-
-프론트 API 기본값은 개발·배포 모두 `server`입니다. 백엔드 없이 화면만 확인하려면
-`frontend/.env.development.local`에 `VITE_API_MODE=mock`을 넣습니다. 기존 `legacy` 모드도 유지합니다.
-`VITE_DEV_TOOLS`는 개발자 메뉴 노출, `VITE_API_ORIGIN`은 별도 백엔드 주소입니다.
-
-백엔드는 실행 프로세스의 환경변수를 읽습니다. `.env`를 쓸 때는 Uvicorn에
-`--env-file .env`를 명시합니다. 환경변수 변경 후 서버를 재시작합니다.
-
-| 설정 | 용도 |
-|---|---|
-| `SPEAKSPOT_OCR_ENABLED`, `SPEAKSPOT_OCR_LANGUAGE`, `SPEAKSPOT_OCR_DPI` | OCR 활성화·언어·해상도 |
-| `SPEAKSPOT_OCR_TESSDATA` / `TESSDATA_PREFIX` | OCR 데이터 경로, 미지정 시 로컬 캐시 탐색 |
-| `SEARCH_E5_SMALL_*`, `SEARCH_BGE_M3_*` | 임베딩 모델 ID·장치·배치 크기 |
-| `TYPESAFE_API_KEY`, `TYPESAFE_JEV_*` | Jev 인증·요청 설정 |
-
-검색 모델 첫 다운로드에는 인터넷과 시간이 필요합니다. 음성 인식은 브라우저 STT만 사용하며 브라우저·네트워크 지원에 영향을 받습니다. OCR은 이미지 속 글자를 추출하며 사진 의미나 복잡한 수식의 복원을 보장하지 않습니다.
-
-## 구조
-
-```text
-backend/
-├── app/
-│   ├── main.py       # 통합 FastAPI 앱
-│   ├── api/          # 문서·검색 HTTP API
-│   ├── documents/    # PDF 파서·OCR·업로드 서비스
-│   ├── search/       # 검색 엔진·알고리즘·모델
-│   └── schemas/      # 공통 데이터 형식
-├── scripts/          # OCR 데이터 준비
-├── tests/            # PDF·검색·통합 회귀 테스트
-└── requirements.txt # 유일한 Python 설치 목록
-frontend/src/
-├── App.tsx           # 문서·세션·발화 큐와 화면 연결
-├── components/       # 헤더/녹음, PDF/업로드, 실시간 매칭/타임라인, 개발자 메뉴
-├── hooks/            # 브라우저 STT
-├── api/              # server·mock·legacy 어댑터와 인터페이스
-├── lib/              # PDF·좌표·발화 유틸리티
-├── types/            # 통신 계약
-├── config.ts         # 기본 설정
-└── index.css         # 리퀴드 글래스 UI, 반응형·접근성·PDF 스타일
-docs/contracts.md     # API 계약
-experiments/          # 모델 실험 자료
-SpeakSpot.cmd        # Windows 더블클릭 실행
-Start-SpeakSpot.ps1   # 가상환경 백엔드 + pnpm dev 준비·실행
-```
-
-문서·검색 세션·타임라인은 단일 서버 프로세스의 메모리에 저장합니다. 재시작하면 PDF를 다시 업로드해야 합니다. 업로드 원본(`backend/uploaded_pdfs/`), OCR/모델 캐시, 가상환경과 실제 `.env` 파일은 소스와 분리합니다.
-
-## API와 상세 안내
-
-| 경로 | 역할 |
-|---|---|
-| `POST /api/v1/documents` | PDF 업로드·추출·검색 등록, 최대 40 MB |
-| `GET /api/v1/documents/{id}/blocks`, `/file` | 블록/좌표와 원본 |
-| `POST /api/v1/sessions` | 검색 세션 |
-| `POST /api/v1/search` | 확정 발화·직접 텍스트 검색 |
-| `POST /api/v1/search/live` | 중간/확정 발화별 실제 큐·블록·페이지 판단 갱신 |
-| `POST /api/v1/search/preview` | 세션 상태를 저장하지 않는 잠정 검색 |
-| `GET /api/v1/sessions/{id}/timeline`, `/search-state` | 이력·현재 페이지·단어 큐 |
-| `POST /api/v1/sessions/{id}/reset-search` | 검색 초기화 |
-
-직접 블록 등록과 옵션 조회, 기존 `/api/mock/blocks`·`/api/search` 호환 API도 유지합니다.
-자세한 형식은 [API 계약](docs/contracts.md)과 실행 중인 `/docs`를 참고하세요.
-음성 인식은 브라우저 Web Speech API가 담당하며 백엔드는 오디오를 수신하지 않습니다.
-
-- [프론트 설정과 구성](frontend/README.md)
-- [PDF/OCR 설치·범위](backend/app/documents/README.md)
-- [검색 기준](backend/app/search/README.md)
-
-## 직접 확인
-
-문서·검색 API와 브라우저 음성 인식을 다음 명령으로 확인할 수 있습니다.
-
-```powershell
-# backend/
-.\.venv\Scripts\python.exe -m pytest tests -q
-# frontend/
-pnpm build
-pnpm lint
-pnpm test
-```
-
-텍스트/이미지/혼합·회전 PDF → 검색·하이라이트 → 브라우저 STT의 중간/확정 발화 →
-반영 주기 변경 → 타임라인·페이지 이동 → 검색 모델 변경 순서로 확인할 수 있습니다.
-기존 업로드 API 테스트는 `uploaded_pdfs/`에 파일을 쓸 수 있으므로 보관할 파일은 먼저 별도 복사합니다.
+- `backend/main.py`: PDF·음성 텍스트 HTTP 처리
+- `backend/pdf.py`: Docling PDF 구조·OCR과 강조 좌표, 모델 준비
+- `backend/search.py`: 명사 추출, E5 단어 비교와 증분 슬라이딩 큐
+- `frontend/src/App.jsx`: 업로드·음성 인식·PDF 뷰어
+- `frontend/src/style.css`: 문서 중심의 단색 화면
+- `start.py`, `SpeakSpot2.cmd`: 로컬 실행

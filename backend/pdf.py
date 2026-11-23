@@ -1,8 +1,7 @@
-"""Model-based PDF structure and Korean/English OCR, with source coordinates."""
-from collections import Counter, defaultdict
+"""Extract text blocks and their coordinates from PDF layout and Korean/English OCR."""
+from collections import defaultdict
 from functools import lru_cache
 from io import BytesIO
-from math import log
 import logging
 import re
 import warnings
@@ -10,7 +9,7 @@ from docling.datamodel.base_models import ConversionStatus, DocumentStream, Inpu
 from docling.datamodel.pipeline_options import EasyOcrOptions, PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling_core.types.doc import ContentLayer, DocItemLabel, TableItem
-from search import Block, lexical_terms
+from search import Block
 
 
 @lru_cache(maxsize=1)
@@ -57,31 +56,19 @@ def parse_pdf(data):
         for prov in item.prov:
             size = document.pages[prov.page_no].size
             box = prov.bbox.to_top_left_origin(page_height=size.height)
-            rect = tuple(min(1.0, max(0.0, value)) for value in
-                (box.l/size.width, box.t/size.height, box.r/size.width, box.b/size.height))
+            rect = tuple(min(1., max(0., value)) for value in
+                         (box.l / size.width, box.t / size.height, box.r / size.width, box.b / size.height))
             if rect[0] < rect[2] and rect[1] < rect[3]:
                 by_page[prov.page_no].append(rect)
         for page, rects in by_page.items():
             blocks.append(Block(f'p{page:04d}_b{len(blocks)+1:04d}', page, text.strip(), rects))
     if not blocks:
         raise ValueError('PDF에서 읽을 수 있는 본문을 찾지 못했습니다.')
-    pages = len(document.pages)
-    words = [lexical_terms(block.text) for block in blocks]
-    page_counts = {page: Counter() for page in range(1, pages+1)}
-    for block, terms in zip(blocks, words):
-        page_counts[block.page].update(terms)
-    frequency = Counter(word for counts in page_counts.values() for word in counts)
-    for block, terms in zip(blocks, words):
-        counts = page_counts[block.page]
-        scores = {word: counts[word]/max(1, sum(counts.values()))*(1+.2*count)
-                  *(log((pages+1)/(frequency[word]+1))+1)
-                  for word, count in Counter(terms).items() if len(word)>1}
-        block.keywords = sorted(scores, key=scores.get, reverse=True)[:5]
-    return pages, blocks
+    return len(document.pages), blocks
 
 
 if __name__ == '__main__':
-    from search import encoder
+    from search import page_encoder
     converter().initialize_pipeline(InputFormat.PDF)
-    encoder()
-    print('PDF layout, Korean/English OCR and E5 models are ready.')
+    page_encoder(local_files_only=False)
+    print('PDF layout, Korean/English OCR and the BGE-M3 page model are ready.')

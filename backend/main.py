@@ -6,7 +6,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from pdf import parse_pdf
-from search import Search
+from search import create_search
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 documents = OrderedDict()
@@ -17,6 +17,7 @@ class Speech(BaseModel):
     utterance_id: str = Field(min_length=1, max_length=128)
     sequence: int = Field(ge=0)
     is_final: bool = False
+    recognition_cycle: int | None = Field(default=None, ge=0)
 
 @app.get('/api/health')
 def health():
@@ -39,17 +40,17 @@ async def upload(file: UploadFile = File(...)):
             except Exception as exc:
                 raise HTTPException(422, str(exc) if isinstance(exc,ValueError) else 'PDF를 읽지 못했습니다.') from exc
             try:
-                search = Search(blocks, page_count=pages)
+                search = create_search(blocks, page_count=pages)
             except ValueError as exc:
                 raise HTTPException(422, str(exc)) from exc
             except Exception as exc:
-                raise HTTPException(503, 'E5 모델을 준비하지 못했습니다. 첫 실행에는 모델 다운로드를 위한 인터넷 연결이 필요합니다.') from exc
+                raise HTTPException(503, '검색 모델을 준비하지 못했습니다. 모델 설치 상태를 확인해주세요.') from exc
             doc_id = uuid4().hex
             documents[doc_id] = search
             while len(documents) > 4:
                 documents.popitem(last=False)
             return {'id':doc_id, 'name':file.filename, 'pages':pages,
-                    'blocks':[{'id':b.block_id,'page':b.page,'rects':b.rects} for b in blocks]}
+                    'blocks':[{'id':b.block_id, 'page':b.page, 'rects':b.rects} for b in blocks]}
     return await run_in_threadpool(prepare)
 
 class PageCorrection(BaseModel):
@@ -74,7 +75,7 @@ def speech(doc_id: str, body: Speech):
     if not body.text.strip():
         raise HTTPException(422, '인식된 문장이 비어 있습니다.')
     try:
-        result = search.update(body.text, body.is_final, body.utterance_id, body.sequence)
+        result = search.update(body.text, body.is_final, body.utterance_id, body.sequence, body.recognition_cycle)
     except Exception as exc:
         raise HTTPException(503, '음성 내용을 문서와 비교하지 못했습니다. 잠시 후 다시 시도해주세요.') from exc
     return {'page':result.page, 'block_id':result.block_id}

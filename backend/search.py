@@ -2,15 +2,12 @@
 from collections import Counter, OrderedDict, defaultdict, deque
 from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
 from threading import Lock
 from time import monotonic_ns
 
 import numpy as np
-from huggingface_hub import snapshot_download
-from huggingface_hub.errors import LocalEntryNotFoundError
 
-from page_ranking import PageIndex, character_ngrams, lexical_terms, normalize
+from page_ranking import PageIndex, lexical_terms, normalize
 from page_tracker import PageTracker
 
 _MODEL = 'BAAI/bge-m3'
@@ -94,17 +91,8 @@ def _clock_ms():
     return monotonic_ns() // 1_000_000
 
 
-def create_search(blocks, page_count):
-    try:
-        snapshot = Path(snapshot_download(_MODEL, local_files_only=True))
-        semantic = any((snapshot / name).is_file() for name in ('model.safetensors', 'pytorch_model.bin'))
-    except LocalEntryNotFoundError:
-        semantic = False
-    return PassageSearch(blocks, page_count, semantic=semantic)
-
-
 class PassageSearch:
-    def __init__(self, blocks, page_count, *, semantic):
+    def __init__(self, blocks, page_count):
         self.page_count = page_count
         self.current_page = 1
         self._lock = Lock()
@@ -114,7 +102,6 @@ class PassageSearch:
         self._committed = deque(maxlen=_CONTEXT_WORDS)
         self._last_query = ()
         self._next_sample = 0
-        self._semantic = semantic
 
         page_text = defaultdict(list)
         self._block_indices = defaultdict(list)
@@ -127,14 +114,11 @@ class PassageSearch:
         self._tracker = PageTracker(self._index.pages)
         self._highlight = BlockHighlight()
 
-        if semantic:
-            if page_count > 1:
-                passages, self._passage_starts = self._index.passages()
-                self._page_vectors = _embed(passages)
-            self._block_vectors = _embed([' '.join(block.text.split()[:72]) for block in blocks])
-            self._block_terms = self._distinctive_block_terms(blocks)
-        else:
-            self._block_grams = [set(character_ngrams(block.text)) for block in blocks]
+        if page_count > 1:
+            passages, self._passage_starts = self._index.passages()
+            self._page_vectors = _embed(passages)
+        self._block_vectors = _embed([' '.join(block.text.split()[:72]) for block in blocks])
+        self._block_terms = self._distinctive_block_terms(blocks)
 
     def correct_page(self, page):
         with self._lock:
@@ -173,7 +157,7 @@ class PassageSearch:
         self._last_query = context
         self._next_sample = at + _SAMPLE_MS
         short, long = ' '.join(context[-_SHORT_WORDS:]), ' '.join(context)
-        vector = _embed([short])[0] if self._semantic else None
+        vector = _embed([short])[0]
 
         page = None
         if self.page_count > 1:
@@ -184,11 +168,9 @@ class PassageSearch:
         return SearchResult(page, self._match_block(short, vector, at))
 
     def _page_scores(self, short, long, vector):
-        if vector is not None:
-            body = np.maximum.reduceat(self._page_vectors @ vector, self._passage_starts)
-            coverage = .65 * self._index.coverage(short) + .35 * self._index.coverage(long)
-            return normalize(body.astype(float) + .10 * coverage, floor=.034)
-        return normalize(.65 * self._index.character(short) + .35 * self._index.character(long), floor=.08)
+        body = np.maximum.reduceat(self._page_vectors @ vector, self._passage_starts)
+        coverage = .65 * self._index.coverage(short) + .35 * self._index.coverage(long)
+        return normalize(body.astype(float) + .10 * coverage, floor=.034)
 
     def _distinctive_block_terms(self, blocks):
         terms = [{term for term in lexical_terms(block.text) if len(term) >= 2} for block in blocks]
@@ -202,16 +184,9 @@ class PassageSearch:
         indices = self._block_indices.get(self.current_page)
         if not indices:
             return None
-        if vector is not None:
-            scores = self._block_vectors[indices] @ vector
-            recent = set(lexical_terms(' '.join(short.split()[-7:])))
-            exact = np.array([len(recent & self._block_terms[index]) for index in indices])
-            scores = scores + _BLOCK_TERM_BONUS * np.minimum(exact, 2) * (scores >= _BLOCK_TERM_BONUS_FLOOR)
-            minimum = .45
-        else:
-            grams = set(character_ngrams(short))
-            size = max(1, len(grams))
-            scores = [len(grams & self._block_grams[index]) / size for index in indices]
-            minimum = max(2 / size, .12)
-        best = self._highlight.observe(scores, minimum, at)
+        scores = self._block_vectors[indices] @ vector
+        recent = set(lexical_terms(' '.join(short.split()[-7:])))
+        exact = np.array([len(recent & self._block_terms[index]) for index in indices])
+        scores = scores + _BLOCK_TERM_BONUS * np.minimum(exact, 2) * (scores >= _BLOCK_TERM_BONUS_FLOOR)
+        best = self._highlight.observe(scores, .45, at)
         return self._block_ids[indices[best]] if best is not None else None

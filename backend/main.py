@@ -6,7 +6,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from pdf import parse_pdf
-from search import create_search
+from search import PassageSearch
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 documents = OrderedDict()
@@ -40,11 +40,11 @@ async def upload(file: UploadFile = File(...)):
             except Exception as exc:
                 raise HTTPException(422, str(exc) if isinstance(exc,ValueError) else 'PDF를 읽지 못했습니다.') from exc
             try:
-                search = create_search(blocks, page_count=pages)
+                search = PassageSearch(blocks, page_count=pages)
             except ValueError as exc:
                 raise HTTPException(422, str(exc)) from exc
             except Exception as exc:
-                raise HTTPException(503, '검색 모델을 준비하지 못했습니다. 모델 설치 상태를 확인해주세요.') from exc
+                raise HTTPException(503, 'BGE-M3 모델을 준비하지 못했습니다. 프로젝트 폴더에서 python backend/pdf.py를 실행해 주세요.') from exc
             doc_id = uuid4().hex
             documents[doc_id] = search
             while len(documents) > 4:

@@ -6,3 +6,4 @@ docling-slim[convert-core,format-pdf,models-local,feat-ocr-easyocr]==2.150.1
 kiwipiepy==0.24.1
 numpy>=1.26,<3
 sentence-transformers>=3
+PyMuPDF>=1.26,<2

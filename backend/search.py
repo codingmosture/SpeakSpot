@@ -7,6 +7,7 @@ from time import monotonic_ns
 
 import numpy as np
 
+from lecture_matching import LectureMatching
 from page_ranking import PageIndex, lexical_terms, normalize
 from page_tracker import PageTracker
 
@@ -16,6 +17,7 @@ _SHORT_WORDS = 11
 _CONTEXT_WORDS = 28
 _SAMPLE_MS = 1500
 _BLOCK_SWITCH_LEAD = .05
+_BLOCK_RUNNER_UP_MARGIN = .015
 _BLOCK_RETURN_MS = 6000
 _BLOCK_EVIDENCE_GAP_MS = 7000
 _BLOCK_TERM_BONUS = .09
@@ -61,7 +63,8 @@ class BlockHighlight:
 
         if self._active is not None and self._pending != best:
             returning = best == self._previous and at - self._changed_at <= _BLOCK_RETURN_MS
-            if returning or scores[best] - scores[self._active] < _BLOCK_SWITCH_LEAD:
+            close = len(scores) > 1 and scores[best] - np.partition(scores, -2)[-2] < _BLOCK_RUNNER_UP_MARGIN
+            if returning or close or scores[best] - scores[self._active] < _BLOCK_SWITCH_LEAD:
                 self._pending = best
                 return None
 
@@ -92,7 +95,7 @@ def _clock_ms():
 
 
 class PassageSearch:
-    def __init__(self, blocks, page_count):
+    def __init__(self, blocks, page_count, *, native_layout=None):
         self.page_count = page_count
         self.current_page = 1
         self._lock = Lock()
@@ -111,7 +114,9 @@ class PassageSearch:
             self._block_indices[block.page].append(index)
             self._block_ids.append(block.block_id)
         self._index = PageIndex(page_text)
-        self._tracker = PageTracker(self._index.pages)
+        self._lecture = (LectureMatching(self._index.pages, blocks, native_layout, _embed)
+                         if native_layout is not None else None)
+        self._tracker = PageTracker(self._index.pages) if self._lecture is None else None
         self._highlight = BlockHighlight()
 
         if page_count > 1:
@@ -125,7 +130,11 @@ class PassageSearch:
             if not 1 <= page <= self.page_count:
                 raise ValueError('문서 범위 안의 페이지를 선택해주세요.')
             self.current_page = page
-            self._tracker.correct(_clock_ms())
+            at = _clock_ms()
+            if self._lecture is not None:
+                self._lecture.correct(page, at)
+            else:
+                self._tracker.correct(at)
             self._highlight.reset()
 
     def update(self, text, is_final, utterance_id, sequence, recognition_cycle=None):
@@ -138,6 +147,8 @@ class PassageSearch:
                 self._committed.clear()
                 self._last_query = ()
                 self._highlight.clear_pending()
+                if self._lecture is not None:
+                    self._lecture.reset_query()
 
             result = self._stream_update(text, is_final)
             if is_final:
@@ -157,19 +168,31 @@ class PassageSearch:
         self._last_query = context
         self._next_sample = at + _SAMPLE_MS
         short, long = ' '.join(context[-_SHORT_WORDS:]), ' '.join(context)
-        vector = _embed([short])[0]
+        if self._lecture is not None:
+            vectors = _embed([short, long] if self.page_count > 1 and short != long else [short])
+            vector, context_vector = vectors[0], vectors[-1]
+            coverage = .65 * self._index.coverage(short) + .35 * self._index.coverage(long)
+            base = self._page_scores(vector, coverage) if self.page_count > 1 else None
+            page, weights, memory = self._lecture.observe(
+                self.current_page, short, long, vector, context_vector, base, coverage, at,
+            )
+            if page is not None:
+                self.current_page = page
+                self._highlight.reset()
+            return SearchResult(page, self._match_block(short, vector, at, lecture=(weights, memory)))
 
+        vector = _embed([short])[0]
         page = None
         if self.page_count > 1:
-            page = self._tracker.observe(self.current_page, self._page_scores(short, long, vector), at)
+            coverage = .65 * self._index.coverage(short) + .35 * self._index.coverage(long)
+            page = self._tracker.observe(self.current_page, self._page_scores(vector, coverage), at)
             if page is not None:
                 self.current_page = page
                 self._highlight.reset()
         return SearchResult(page, self._match_block(short, vector, at))
 
-    def _page_scores(self, short, long, vector):
+    def _page_scores(self, vector, coverage):
         body = np.maximum.reduceat(self._page_vectors @ vector, self._passage_starts)
-        coverage = .65 * self._index.coverage(short) + .35 * self._index.coverage(long)
         return normalize(body.astype(float) + .10 * coverage, floor=.034)
 
     def _distinctive_block_terms(self, blocks):
@@ -180,13 +203,18 @@ class PassageSearch:
                 terms[index] = {term for term in terms[index] if counts[term] == 1}
         return terms
 
-    def _match_block(self, short, vector, at):
+    def _match_block(self, short, vector, at, *, lecture=None):
         indices = self._block_indices.get(self.current_page)
         if not indices:
             return None
         scores = self._block_vectors[indices] @ vector
-        recent = set(lexical_terms(' '.join(short.split()[-7:])))
+        recent = set(lexical_terms(' '.join(short.split()[-4:])))
         exact = np.array([len(recent & self._block_terms[index]) for index in indices])
         scores = scores + _BLOCK_TERM_BONUS * np.minimum(exact, 2) * (scores >= _BLOCK_TERM_BONUS_FLOOR)
-        best = self._highlight.observe(scores, .45, at)
+        minimum = .45
+        if lecture is not None:
+            weights, memory = lecture
+            scores = self._lecture.block_scores(self.current_page, scores, weights, memory)
+            minimum = -np.inf
+        best = self._highlight.observe(scores, minimum, at)
         return self._block_ids[indices[best]] if best is not None else None

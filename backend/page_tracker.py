@@ -8,19 +8,19 @@ class PageTracker:
         self._positions = {page: index for index, page in enumerate(pages)}
         self._last_at = None
         self._last_move = None
-        self._clear_pending()
+        self.clear_pending()
 
-    def _clear_pending(self):
+    def clear_pending(self):
         self._pending = None
         self._count = 0
 
     def correct(self, at):
-        self._clear_pending()
+        self.clear_pending()
         self._last_move = at
 
-    def observe(self, current, scores, at):
+    def observe(self, current, scores, at, *, allowed=None):
         if self._last_at is not None and at - self._last_at > 7000:
-            self._clear_pending()
+            self.clear_pending()
         self._last_at = at
         if self._last_move is not None and at - self._last_move < 1500:
             return None
@@ -33,8 +33,8 @@ class PageTracker:
         leads = np.where(eligible, scores - costs - stay, -np.inf)
         best = int(np.argmax(leads))
 
-        if leads[best] < .12:
-            self._clear_pending()
+        if leads[best] < .12 or (allowed is not None and not allowed[best]):
+            self.clear_pending()
             return None
         self._count = self._count + 1 if best == self._pending else 1
         self._pending = best

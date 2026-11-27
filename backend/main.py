@@ -36,11 +36,11 @@ async def upload(file: UploadFile = File(...)):
     def prepare():
         with loading:
             try:
-                pages, blocks = parse_pdf(data)
+                pages, blocks, layout = parse_pdf(data, include_layout=True)
             except Exception as exc:
                 raise HTTPException(422, str(exc) if isinstance(exc,ValueError) else 'PDF를 읽지 못했습니다.') from exc
             try:
-                search = PassageSearch(blocks, page_count=pages)
+                search = PassageSearch(blocks, page_count=pages, native_layout=layout)
             except ValueError as exc:
                 raise HTTPException(422, str(exc)) from exc
             except Exception as exc:

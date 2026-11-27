@@ -9,6 +9,7 @@ from docling.datamodel.base_models import ConversionStatus, DocumentStream, Inpu
 from docling.datamodel.pipeline_options import EasyOcrOptions, PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling_core.types.doc import ContentLayer, DocItemLabel, TableItem
+from lecture_pdf import read_layout
 from search import Block
 
 
@@ -27,7 +28,7 @@ def _pattern(text):
     return ' '.join(re.sub(r'\d+', '#', text.casefold()).split())
 
 
-def parse_pdf(data):
+def parse_pdf(data, *, include_layout=False):
     try:
         result = converter().convert(DocumentStream(name='document.pdf', stream=BytesIO(data)))
     except Exception as exc:
@@ -64,7 +65,15 @@ def parse_pdf(data):
             blocks.append(Block(f'p{page:04d}_b{len(blocks)+1:04d}', page, text.strip(), rects))
     if not blocks:
         raise ValueError('PDF에서 읽을 수 있는 본문을 찾지 못했습니다.')
-    return len(document.pages), blocks
+    pages = len(document.pages)
+    if not include_layout:
+        return pages, blocks
+    try:
+        layout = read_layout(data)
+    except (RuntimeError, ValueError):
+        logging.getLogger(__name__).warning('Native PDF layout could not be read; using Docling blocks', exc_info=True)
+        layout = {}
+    return pages, blocks, layout
 
 
 if __name__ == '__main__':

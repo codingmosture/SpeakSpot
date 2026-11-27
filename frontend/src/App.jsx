@@ -359,7 +359,7 @@ function ActionIcon({ children }) {
 // 문서 열기, 음성 검색, 필기 저장을 연결하고 홈과 PDF 뷰어를 표시한다.
 function App() {
   const [document, setDocument] = useState(null), [pdf, setPdf] = useState(null)
-  const [pageView, setPageView] = useState({ page: 1, navigate: false })
+  const [pageView, setPageView] = useState({ page: 1, alignment: 'top' })
   const { page } = pageView
   const [highlight, setHighlight] = useState(null)
   const [uploading, setUploading] = useState(''), [error, setError] = useState(''), [caption, setCaption] = useState('')
@@ -400,9 +400,9 @@ function App() {
   }
 
   // 현재 페이지를 기록하고 필요하면 해당 페이지로 스크롤한다.
-  function showPage(next, navigate = true) {
+  function showPage(next, alignment) {
     viewerPageRef.current = next
-    setPageView({ page: next, navigate })
+    setPageView({ page: next, alignment })
   }
   // 검색 요청을 순서대로 보내고 만료된 세션을 복구한 뒤 강조와 페이지를 갱신한다.
   async function flush() {
@@ -457,7 +457,7 @@ function App() {
             if (Number.isInteger(matchedPage) && matchedPage >= 1 && matchedPage <= currentPdf.current.numPages) {
               matchedPageRef.current = matchedPage
               if ((followRef.current || spaceHeld.current) && (result.page != null || matchedPage !== viewerPageRef.current)) {
-                showPage(matchedPage)
+                showPage(matchedPage, spaceHeld.current ? 'bottom' : 'top')
               }
             }
           }
@@ -644,7 +644,7 @@ function App() {
       matchedPageRef.current = 1
       setPdf({ ...local, generation: work.current.generation }); setDocument(doc)
       setNotes(session?.notes ?? []); setActiveNote(null)
-      showPage(initialPage); setHighlight(null); setCaption('')
+      showPage(initialPage, 'top'); setHighlight(null); setCaption('')
       if (saved || initialPage > 1) correctPage(initialPage, Boolean(saved))
       if (!saved && await writeSession()) await storeSearchSnapshot(doc).catch(() => {})
     } catch (err) {
@@ -725,14 +725,14 @@ function App() {
     }
   }, [noteMenu])
   // 가장 최근에 발화가 매칭된 페이지로 한 번 이동한다.
-  function jumpToSpeech() {
-    if (matchedPageRef.current != null) showPage(matchedPageRef.current)
+  function jumpToSpeech(alignment = 'bottom') {
+    if (matchedPageRef.current != null) showPage(matchedPageRef.current, alignment)
   }
   // 발화 자동 따라가기를 바꾸고 켜면 최근 매칭 페이지로 이동한다.
   function changeFollow(enabled) {
     followRef.current = enabled
     setFollow(enabled)
-    if (enabled) jumpToSpeech()
+    if (enabled) jumpToSpeech('top')
   }
   // 블럭 경계 표시를 바꾸고 이전 좌표 로드가 실패했으면 다시 요청한다.
   function changeBlockVisibility(enabled) {
@@ -754,9 +754,9 @@ function App() {
     void flush()
   }
   // 실제 표시 페이지가 바뀐 경우에만 뷰어 위치를 갱신한다.
-  function changeViewerPage(next, navigate = true) {
+  function changeViewerPage(next, alignment = 'bottom') {
     if (next === viewerPageRef.current) return
-    showPage(next, navigate)
+    showPage(next, alignment)
   }
   // 지금 보고 있는 페이지를 발화 검색의 기준으로 삼는다.
   function resetSpeechToViewer() {
@@ -943,19 +943,29 @@ function pageIndexAt(pages, offset) {
   let first = 0, last = pages.length - 1
   while (first < last) {
     const middle = Math.floor((first + last) / 2)
-    if (pageBottom(pages[middle]) < offset) first = middle + 1
+    if (pageBottom(pages[middle]) <= offset) first = middle + 1
     else last = middle
   }
   return first
 }
 
+// 하단에 맞춰 이동한 뒤에는 뷰어 하단과 가장 가까운 페이지를 찾는다.
+function pageIndexNearBottom(pages, offset) {
+  const index = pageIndexAt(pages, offset)
+  if (index === 0) return 0
+  const before = Math.abs(offset - pageBottom(pages[index - 1]))
+  const after = Math.abs(offset - pageBottom(pages[index]))
+  return before < after ? index - 1 : index
+}
+
 // PDF 페이지를 배치하고 스크롤 위치와 현재 페이지를 서로 맞춘다.
 function Viewer({ container, pdf, firstPageSize, pageView, onPage, highlight, boundaries, notes, activeNote, onAddNote,
   onToggleNote, onMoveNote, onNoteMenu, onNoteText, noteReadOnly }) {
-  const { page, navigate } = pageView
+  const { page, alignment } = pageView
   const visible = useRef(page)
   const previousSize = useRef(null)
-  const [pageSize, setPageSize] = useState({ width: 0, height: 0 })
+  const scrollPosition = useRef({ alignment: 'top', lead: 0, top: null })
+  const [pageSize, setPageSize] = useState({ width: 0, height: 0, viewportHeight: 0 })
   const [renderRange, setRenderRange] = useState({ first: 0, last: 1 })
   const scale = Math.min(pageSize.width / firstPageSize.width, pageSize.height / firstPageSize.height)
   const width = Math.floor(firstPageSize.width * scale)
@@ -973,7 +983,7 @@ function Viewer({ container, pdf, firstPageSize, pageView, onPage, highlight, bo
     const element = container.current
     const observer = new ResizeObserver(([entry]) => {
       const { width, height } = entry.contentRect
-      setPageSize({ width, height })
+      setPageSize({ width, height, viewportHeight: element.clientHeight })
     })
     observer.observe(element)
     return () => observer.disconnect()
@@ -983,26 +993,37 @@ function Viewer({ container, pdf, firstPageSize, pageView, onPage, highlight, bo
   useLayoutEffect(() => {
     if (!pageSize.width || !pageSize.height) return
     const element = container.current
-    if (navigate || previousSize.current !== pageSize) {
+    if (alignment || previousSize.current !== pageSize) {
       visible.current = page
       previousSize.current = pageSize
-      element.scrollTop = pageBottom(element.children[page - 1]) - element.clientHeight
+      const position = scrollPosition.current
+      const anchor = alignment ?? position.alignment
+      const target = element.children[page - 1]
+      const bottomAligned = anchor === 'bottom'
+      // 짧은 앞쪽 페이지도 하단에 맞출 수 있도록 필요한 만큼만 시작 여백을 더한다.
+      const lead = bottomAligned ? Math.max(0, element.clientHeight - pageBottom(target) + position.lead) : 0
+      element.style.setProperty('--page-scroll-lead', `${lead}px`)
+      element.scrollTop = bottomAligned ? pageBottom(target) - element.clientHeight : (page === 1 ? 0 : target.offsetTop)
+      scrollPosition.current = { alignment: anchor, lead, top: element.scrollTop }
     }
     renderVisiblePages(element)
   }, [pageView, pageSize])
 
+  // 여러 페이지가 있으면 마지막 페이지도 뷰어 상단까지 스크롤할 수 있게 한다.
+  const tail = pdf.numPages > 1 ? Math.max(0, pageSize.viewportHeight - height) : 0
   return <div className="pages" ref={container} tabIndex={0} aria-label="PDF 페이지"
+    style={{ '--page-scroll-tail': `${tail}px` }}
     onScroll={event => {
-      // 뷰어 하단에 가장 가까운 페이지를 현재 페이지로 기록한다.
       const element = event.currentTarget
-      const bottom = element.scrollTop + element.clientHeight
-      const index = pageIndexAt(element.children, bottom)
-      const previous = element.children[index - 1]
-      const closest = previous && bottom - pageBottom(previous) < pageBottom(element.children[index]) - bottom
-        ? index - 1 : index
-      const next = closest + 1
       renderVisiblePages(element)
-      if (next !== visible.current) { visible.current = next; onPage(next, false) }
+      const position = scrollPosition.current
+      if (element.scrollTop === position.top) return
+      position.top = null
+      const index = position.alignment === 'bottom'
+        ? pageIndexNearBottom(element.children, element.scrollTop + element.clientHeight)
+        : pageIndexAt(element.children, element.scrollTop)
+      const next = index + 1
+      if (next !== visible.current) { visible.current = next; onPage(next, null) }
     }} onKeyDown={event => {
       // 뷰어에 초점이 있을 때 방향키와 Page Up/Down으로 이동한다.
       if (event.target !== event.currentTarget) return

@@ -102,19 +102,28 @@ button:focus-visible, .pages:focus-visible {
 }
 
 .pages {
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   padding-block-start: calc(var(--overlay-inset) + var(--island-size) + 8px);
+  overflow-y: auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
   scrollbar-width: none;
 }
 
 .page {
+  flex: none;
   display: grid;
-  place-items: end center;
+  justify-items: center;
 }
 
 .page:first-child {
-  min-height: 100%;
+  margin-block-start: var(--page-scroll-lead, 0px);
+}
+
+.page:last-child {
+  margin-block-end: var(--page-scroll-tail, 0px);
 }
 
 .sheet { position: relative; background: #fff; }

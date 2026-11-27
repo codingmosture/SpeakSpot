@@ -76,6 +76,12 @@ pnpm --dir frontend install
 pnpm --dir frontend dev
 ```
 
+### Chrome 앱 창으로 열기
+
+Chrome에서 `http://127.0.0.1:5173`을 열고 **⋮ → 캐스팅, 저장, 공유 → 페이지를 앱으로 설치…**를 선택하면 SpeakSpot 아이콘이 표시되는 독립 창으로 열 수 있습니다.
+이미 설치한 앱에서 **앱 업데이트 검토**가 표시되면 새 아이콘을 적용할 수 있습니다.
+앱 창으로 사용할 때도 `SpeakSpot.cmd`로 로컬 서버를 실행합니다.
+
 ## 동작 방식
 
 - **음성 인식:** 브라우저의 Web Speech API로 한국어 발화를 텍스트로 변환합니다. Chrome과 마이크가 필요합니다.
@@ -109,5 +115,6 @@ PDF 원본, 필기, 마지막으로 저장한 페이지는 브라우저의 Index
 | `frontend/src/App.jsx` | 음성 인식, PDF 업로드와 뷰어 |
 | `frontend/src/savedDocuments.js` | 브라우저에서 PDF, 필기, 마지막 페이지와 분석 결과 저장 |
 | `frontend/src/style.css` | 화면 스타일 |
+| `frontend/public/` | 브라우저 탭과 설치형 앱의 아이콘 및 웹 앱 매니페스트 |
 | `frontend/vite.config.js` | 개발 서버와 백엔드 프록시 |
 | `start.py`, `SpeakSpot.cmd` | 서버 실행 |

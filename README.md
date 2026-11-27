@@ -86,9 +86,10 @@ PDF 분석은 업로드할 때 수행합니다. 페이지가 많거나 스캔 �
 | 파일 | 역할 |
 | --- | --- |
 | `backend/main.py` | 문서 업로드와 발화 검색 API |
-| `backend/pdf.py` | PDF 구조 분석, OCR, 강조 좌표와 모델 준비 |
-| `backend/search.py`, `backend/page_ranking.py`, `backend/page_tracker.py` | 발화 검색, 페이지 점수와 이동 판단 |
-| `backend/lecture_*.py`, `backend/document_terms.py` | PDF 검색용 레이아웃, 문서에서 추출한 용어와 도식 단서, 페이지 전환과 블록 추적 |
+| `backend/pdf.py` | PDF 읽기와 OCR, 제목·도식 배치, 강조 좌표, 모델 준비 |
+| `backend/text_index.py` | 형태소 분석, 문서별 용어와 도식 단서 색인, 검색 점수 정규화 |
+| `backend/search.py` | 발화 순서와 문맥 처리, 임베딩 검색, 블록 강조 |
+| `backend/lecture_matching.py` | 페이지 전환 확인과 페이지 안의 블록 추적 |
 | `backend/requirements.txt` | Python 의존성 |
 | `frontend/src/App.jsx` | 음성 인식, PDF 업로드와 뷰어 |
 | `frontend/src/style.css` | 화면 스타일 |

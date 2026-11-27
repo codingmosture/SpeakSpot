@@ -7,9 +7,9 @@ from time import monotonic_ns
 
 import numpy as np
 
-from lecture_matching import LectureMatching
-from page_ranking import PageIndex, lexical_terms, normalize
-from page_tracker import PageTracker
+from lecture_matching import LectureMatching, PageTracker
+from pdf import Block
+from text_index import PageIndex, lexical_terms, normalize
 
 _MODEL = 'BAAI/bge-m3'
 _ENCODER_LOCK = Lock()
@@ -24,14 +24,6 @@ _BLOCK_TERM_BONUS = .09
 _BLOCK_TERM_BONUS_FLOOR = .42
 
 
-@dataclass
-class Block:
-    block_id: str
-    page: int
-    text: str
-    rects: list
-
-
 @dataclass(frozen=True, slots=True)
 class SearchResult:
     page: int | None = None
@@ -39,9 +31,11 @@ class SearchResult:
 
 
 class BlockHighlight:
+    # 블록 강조에 필요한 후보와 전환 상태를 초기화한다.
     def __init__(self):
         self.reset()
 
+    # 현재 강조와 대기 후보를 초기화한다.
     def reset(self):
         self._active = None
         self._previous = None
@@ -49,9 +43,11 @@ class BlockHighlight:
         self._last_at = None
         self.clear_pending()
 
+    # 아직 확인되지 않은 강조 후보만 지운다.
     def clear_pending(self):
         self._pending = None
 
+    # 점수 차이와 후보 반복을 확인해 새로 강조할 블록을 고른다.
     def observe(self, scores, minimum, at):
         if self._last_at is not None and at - self._last_at > _BLOCK_EVIDENCE_GAP_MS:
             self.clear_pending()
@@ -74,6 +70,7 @@ class BlockHighlight:
         return best
 
 
+# 로컬 BGE-M3 임베딩 모델을 불러와 재사용한다.
 @lru_cache(maxsize=1)
 def page_encoder(*, local_files_only=True):
     import torch
@@ -83,6 +80,7 @@ def page_encoder(*, local_files_only=True):
     return SentenceTransformer(_MODEL, device='cpu', local_files_only=local_files_only)
 
 
+# 텍스트를 BGE-M3 벡터로 변환하고 모델 호출을 직렬화한다.
 def _embed(texts):
     with _ENCODER_LOCK:
         return page_encoder().encode(
@@ -90,11 +88,13 @@ def _embed(texts):
         )
 
 
+# 검색 주기와 전환 시간을 잴 단조 시계 값을 밀리초로 읽는다.
 def _clock_ms():
     return monotonic_ns() // 1_000_000
 
 
 class PassageSearch:
+    # 한 문서의 페이지 검색 인덱스, 블록 벡터, 발화 상태를 준비한다.
     def __init__(self, blocks, page_count, *, native_layout=None):
         self.page_count = page_count
         self.current_page = 1
@@ -125,6 +125,7 @@ class PassageSearch:
                          if native_layout is not None else None)
         self._tracker = PageTracker(self._index.pages) if self._lecture is None else None
 
+    # 유효한 수동 페이지를 검색 기준으로 적용하고 강조 상태를 초기화한다.
     def correct_page(self, page):
         with self._lock:
             if not 1 <= page <= self.page_count:
@@ -137,6 +138,7 @@ class PassageSearch:
                 self._tracker.correct(at)
             self._highlight.reset()
 
+    # 순서가 맞는 새 발화만 받고 인식 주기와 확정 발화를 관리한다.
     def update(self, text, is_final, utterance_id, sequence, recognition_cycle=None):
         with self._lock:
             if sequence <= self._sequence or utterance_id in self._finalized:
@@ -157,6 +159,7 @@ class PassageSearch:
                     self._finalized.popitem(last=False)
             return result
 
+    # 발화 문맥을 누적하고 정해진 간격으로 페이지와 블록을 검색한다.
     def _stream_update(self, text, is_final):
         words = tuple(text.split()[-_CONTEXT_WORDS:])
         context = (*self._committed, *words)[-_CONTEXT_WORDS:]
@@ -168,33 +171,32 @@ class PassageSearch:
         self._last_query = context
         self._next_sample = at + _SAMPLE_MS
         short, long = ' '.join(context[-_SHORT_WORDS:]), ' '.join(context)
+        multiple_pages = self.page_count > 1
+        query = [short, long] if self._lecture is not None and multiple_pages and short != long else [short]
+        vectors = _embed(query)
+        vector = vectors[0]
+        page, lecture = None, None
+        if multiple_pages or self._lecture is not None:
+            coverage = .65 * self._index.coverage(short) + .35 * self._index.coverage(long)
+            base = self._page_scores(vector, coverage) if multiple_pages else None
         if self._lecture is not None:
-            vectors = _embed([short, long] if self.page_count > 1 and short != long else [short])
-            vector, context_vector = vectors[0], vectors[-1]
-            coverage = .65 * self._index.coverage(short) + .35 * self._index.coverage(long)
-            base = self._page_scores(vector, coverage) if self.page_count > 1 else None
             page, weights, memory = self._lecture.observe(
-                self.current_page, short, long, vector, context_vector, base, coverage, at,
+                self.current_page, short, long, vector, vectors[-1], base, coverage, at,
             )
-            if page is not None:
-                self.current_page = page
-                self._highlight.reset()
-            return SearchResult(page, self._match_block(short, vector, at, lecture=(weights, memory)))
+            lecture = weights, memory
+        elif multiple_pages:
+            page = self._tracker.observe(self.current_page, base, at)
+        if page is not None:
+            self.current_page = page
+            self._highlight.reset()
+        return SearchResult(page, self._match_block(short, vector, at, lecture=lecture))
 
-        vector = _embed([short])[0]
-        page = None
-        if self.page_count > 1:
-            coverage = .65 * self._index.coverage(short) + .35 * self._index.coverage(long)
-            page = self._tracker.observe(self.current_page, self._page_scores(vector, coverage), at)
-            if page is not None:
-                self.current_page = page
-                self._highlight.reset()
-        return SearchResult(page, self._match_block(short, vector, at))
-
+    # 페이지별 임베딩 유사도와 용어 포함 점수를 합친다.
     def _page_scores(self, vector, coverage):
         body = np.maximum.reduceat(self._page_vectors @ vector, self._passage_starts)
         return normalize(body.astype(float) + .10 * coverage, floor=.034)
 
+    # 같은 페이지의 다른 블록과 겹치지 않는 명사를 찾는다.
     def _distinctive_block_terms(self, blocks):
         terms = [{term for term in lexical_terms(block.text) if len(term) >= 2} for block in blocks]
         for indices in self._block_indices.values():
@@ -203,6 +205,7 @@ class PassageSearch:
                 terms[index] = {term for term in terms[index] if counts[term] == 1}
         return terms
 
+    # 현재 페이지의 블록을 점수화하고 강조기가 고른 블록 ID를 반환한다.
     def _match_block(self, short, vector, at, *, lecture=None):
         indices = self._block_indices.get(self.current_page)
         if not indices:

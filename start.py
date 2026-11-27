@@ -12,6 +12,7 @@ import webbrowser
 
 ROOT = Path(__file__).resolve().parent
 
+# 서비스가 요청에 응답하는지와 SpeakSpot 서버가 맞는지 확인한다.
 def ready(url, name):
     try:
         with urlopen(url,timeout=1) as response:
@@ -20,11 +21,13 @@ def ready(url, name):
     except Exception:
         return False
 
+# 로컬 포트를 다른 프로세스가 사용 중인지 확인한다.
 def occupied(port):
     with socket.socket() as client:
         client.settimeout(.5)
         return client.connect_ex(('127.0.0.1',port)) == 0
 
+# 백엔드와 프론트엔드를 실행하고 준비가 끝나면 브라우저를 연다.
 def main():
     python = ROOT / ('backend/.venv/Scripts/python.exe' if os.name == 'nt' else 'backend/.venv/bin/python')
     pnpm = shutil.which('pnpm.cmd' if os.name == 'nt' else 'pnpm')

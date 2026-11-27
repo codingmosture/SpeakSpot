@@ -114,9 +114,6 @@ class PassageSearch:
             self._block_indices[block.page].append(index)
             self._block_ids.append(block.block_id)
         self._index = PageIndex(page_text)
-        self._lecture = (LectureMatching(self._index.pages, blocks, native_layout, _embed)
-                         if native_layout is not None else None)
-        self._tracker = PageTracker(self._index.pages) if self._lecture is None else None
         self._highlight = BlockHighlight()
 
         if page_count > 1:
@@ -124,6 +121,9 @@ class PassageSearch:
             self._page_vectors = _embed(passages)
         self._block_vectors = _embed([' '.join(block.text.split()[:72]) for block in blocks])
         self._block_terms = self._distinctive_block_terms(blocks)
+        self._lecture = (LectureMatching(self._index.pages, blocks, native_layout, _embed, self._block_vectors)
+                         if native_layout is not None else None)
+        self._tracker = PageTracker(self._index.pages) if self._lecture is None else None
 
     def correct_page(self, page):
         with self._lock:
@@ -217,4 +217,6 @@ class PassageSearch:
             scores = self._lecture.block_scores(self.current_page, scores, weights, memory)
             minimum = -np.inf
         best = self._highlight.observe(scores, minimum, at)
+        if best is not None and lecture is not None:
+            self._lecture.highlighted(self.current_page, best)
         return self._block_ids[indices[best]] if best is not None else None

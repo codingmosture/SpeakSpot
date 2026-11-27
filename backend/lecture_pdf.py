@@ -5,8 +5,6 @@ import unicodedata
 
 import pymupdf
 
-from lecture_terms import additions
-
 PREFIX = re.compile(r'^(?:[•·▪]\s*|\d{1,2}[.)]\s*)')
 PUNCT = re.compile(r'[\W_]+')
 NEIGHBOR_SEPARATORS = ('상단', '위쪽', '가운데', '아래쪽')
@@ -35,11 +33,6 @@ def unique(lines):
         if len(key) > 1 and key not in output:
             output[key] = text
     return list(output.values())
-
-
-def bilingual(text):
-    aliases = sorted(set(additions(text)))
-    return text if not aliases else f'{text}. {" | ".join(aliases[:12])}'
 
 
 def compact_lines(lines):
@@ -105,7 +98,7 @@ def build_one(rows, raw_lines):
     core = unique([*map(lambda line: clean(line['text']), keys), *raw[:10]])[:12]
     native = f'{title}. {" / ".join(raw[:20])}'
     focus = f'{title}. {" · ".join(core)}'
-    return IndexPage(title, bilingual(native), bilingual(structured), bilingual(focus))
+    return IndexPage(title, native, structured, focus)
 
 
 def clean_line(text):

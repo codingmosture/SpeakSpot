@@ -5,16 +5,10 @@ import re
 
 import numpy as np
 
-from lecture_pdf import block_box, normalized
-from lecture_terms import GLOSSARY, LETTERS, TERMS
+from document_terms import acronyms, literal_terms
+from lecture_pdf import block_box
 from page_ranking import lexical_terms
 
-_ALIAS_PATTERN = {
-    name: re.compile(r'(?<![a-z])' + r'[^a-z]+'.join(re.findall('[a-z]+', name)) + r'(?![a-z])')
-    for name in TERMS
-}
-_ALIAS_FORMS = {name: tuple(normalized(form) for form in variants) for name, variants in TERMS.items()}
-_ACRONYMS = re.compile(r'\b[A-Z]{2,6}\b')
 _NUMBERS = re.compile(r'(?<![\w.-])\d{2,6}(?![\d.])')
 _NUMERIC_TALK = re.compile(r'주소|위치|번호|시작|끝|크기|계산|적재|거리|배치|간격|차이|범위|이동|오프셋')
 
@@ -27,10 +21,7 @@ def phrases(text):
 
 @lru_cache(maxsize=8192)
 def anchor_keys(text):
-    folded, compact = text.casefold(), normalized(text)
-    names = {name for name, forms in _ALIAS_FORMS.items()
-             if _ALIAS_PATTERN[name].search(folded) or any(form in compact for form in forms)}
-    return frozenset(names | {words for words in phrases(text) if len(set(words)) >= 2})
+    return frozenset(words for words in phrases(text) if len(set(words)) >= 2)
 
 
 def _stacked_labels(lines):
@@ -66,34 +57,36 @@ def _diagram_numbers(lines_by_page):
 
 
 class LectureAnchors:
-    def __init__(self, pages, blocks, profiles, layout):
+    def __init__(self, pages, blocks, profiles, layout, dictionary, single_weight):
         self.pages = pages
         self.numbers = _diagram_numbers(layout)
+        self._dictionary = dictionary
+        self._single_weight = single_weight
         page_keys, block_keys = {}, {}
         for page in pages:
             lines = [line for line in layout.get(page, ())
                      if .02 <= line['box'][1] <= .92 and abs(line['rotation']) <= .05]
-            stacked = [(anchor_keys(text), box) for text, box in _stacked_labels(lines)]
-            keys = set().union(*(anchor_keys(line['text']) for line in lines), *(tags for tags, _ in stacked))
+            stacked = [(self._keys(text), box) for text, box in _stacked_labels(lines)]
+            keys = set().union(*(self._keys(line['text']) for line in lines), *(tags for tags, _ in stacked))
             block_keys[page] = []
             for block in blocks[page]:
                 terms = set()
                 if len(block.text.split()) <= 46:
                     box = block_box(block)
-                    terms.update(anchor_keys(block.text))
+                    terms.update(self._keys(block.text))
                     terms.update(key for tags, rect in stacked if _overlap(rect, box) >= .35 for key in tags)
                 keys.update(terms)
                 block_keys[page].append(terms)
             page_keys[page] = keys
         vocabulary = sorted(set().union(*page_keys.values()), key=repr)
         self.columns = {key: i for i, key in enumerate(vocabulary)}
+        self._paired = np.array([isinstance(key, tuple) and key[0] == 'document-term' for key in vocabulary], dtype=bool)
         self.ownership = np.array([[key in page_keys[page] for page in pages]
                                    for key in vocabulary], dtype=bool).reshape(len(vocabulary), len(pages))
         frequency = self.ownership.sum(axis=1)
         rarity = np.log1p((len(pages) - frequency + .5) / (frequency + .5))
-        self.weights = rarity * [1. if isinstance(key, tuple) else (1.12 if ' ' in key else .48) for key in vocabulary]
-        self.specific = np.array([isinstance(key, tuple) or ' ' in key for key in vocabulary], dtype=bool)
-        self.heading = [[self.columns[key] for key in anchor_keys(profiles[page].header) if key in self.columns]
+        self.weights = rarity * [1. if isinstance(key, tuple) else single_weight for key in vocabulary]
+        self.heading = [[self.columns[key] for key in self._keys(profiles[page].header) if key in self.columns]
                         for page in pages]
         self.block_indexes = {}
         for page, groups in block_keys.items():
@@ -106,19 +99,40 @@ class LectureAnchors:
                 for key, columns in postings.items()
             }
 
-    def observe(self, short, long):
+    def _keys(self, text):
+        keys = anchor_keys(text)
+        if self._dictionary is not None:
+            keys |= self._dictionary.matches(text)
+        if self._single_weight:
+            keys |= literal_terms(text)
+        return keys
+
+    def observe(self, short, long, *, literal_heading=False):
         weights = np.zeros(len(self.columns))
-        weights[[self.columns[key] for key in anchor_keys(long) if key in self.columns]] = .48
-        weights[[self.columns[key] for key in anchor_keys(short) if key in self.columns]] = 1.
-        heading = np.asarray([min(1.5, weights[keys] @ self.weights[keys] / 2) for keys in self.heading])
+        weights[[self.columns[key] for key in self._keys(long) if key in self.columns]] = .48
+        weights[[self.columns[key] for key in self._keys(short) if key in self.columns]] = 1.
+        heading = self._heading_scores(weights, literal_heading)
         numbers = {int(number) for number in _NUMBERS.findall(short)} if _NUMERIC_TALK.search(long) else set()
         numeric = np.asarray([bool(numbers & self.numbers.get(page, ())) if page in self.numbers else False
                               for page in self.pages])
         return weights, heading, numeric
 
-    def incoming(self, weight, current):
+    def _heading_scores(self, weights, literal):
+        scores = weights * self.weights
+        if literal:
+            scores = scores * ~self._paired
+        return np.asarray([min(1.5, scores[keys].sum() / 2) for keys in self.heading])
+
+    def literal_titles(self, text):
+        weights = np.zeros(len(self.columns))
+        keys = [self.columns[key] for key in anchor_keys(text) if key in self.columns]
+        weights[keys] = 1.
+        return self._heading_scores(weights, True)
+
+    def incoming(self, weight, current, *, include_pairs=True):
         owner = self.ownership[:, current] if current is not None else np.zeros(len(weight), dtype=bool)
-        return ((weight * self.weights) * (self.specific & ~owner)) @ self.ownership
+        eligible = ~owner if include_pairs else ~owner & ~self._paired
+        return (weight * self.weights * eligible) @ self.ownership
 
     def block_support(self, page, weights, count):
         evidence = np.zeros(count)
@@ -128,19 +142,9 @@ class LectureAnchors:
         return np.minimum(1.4, evidence / 2.1)
 
 
-def _expanded_forms(text):
-    flat = ' ' + ' '.join(re.findall(r'[a-z]+', text.casefold())) + ' '
-    for phrase, variants in GLOSSARY.items():
-        key = ' '.join(re.findall(r'[a-z]+', phrase))
-        if f' {key} ' in flat:
-            yield from variants
-    for code in set(_ACRONYMS.findall(text)) - {'OS', 'HW', 'SW', 'II', 'III', 'ETC'}:
-        yield code
-        yield ''.join(LETTERS[letter] for letter in code)
-
-
 class BlockPhrases:
-    def __init__(self, blocks):
+    def __init__(self, blocks, dictionary):
+        self._dictionary = dictionary
         self.pages = {}
         for page, rows in blocks.items():
             postings = {}
@@ -149,15 +153,11 @@ class BlockPhrases:
                     continue
                 for key in phrases(block.text):
                     self._store(postings, key, i, 'words', .64 if len(key) == 2 else .96)
-                for variant in _expanded_forms(block.text):
-                    if variant.isascii():
-                        self._store(postings, variant.casefold(), i, 'code', 1.55)
-                        continue
-                    compact = normalized(variant)
-                    if len(compact) >= 3:
-                        self._store(postings, compact, i, 'phrase', 1.42)
-                    for key in phrases(variant):
-                        self._store(postings, key, i, 'words', .78 if len(key) == 2 else 1.2)
+                if dictionary is not None:
+                    for key in dictionary.matches(block.text):
+                        self._store(postings, key, i, 'alias', 1.30)
+                    for code in acronyms(block.text):
+                        self._store(postings, code, i, 'code', 1.55)
             self.pages[page] = {
                 key: (kind, weight / len(owners) ** .65, np.asarray(sorted(owners)))
                 for key, (kind, weight, owners) in postings.items() if len(owners) < len(rows)
@@ -180,6 +180,6 @@ class BlockPhrases:
                     evidence[indexes] += .35 * weight
             yield page, np.tanh(evidence / 1.8)
 
-    @staticmethod
-    def _query(text):
-        return {'words': phrases(text), 'code': set(lexical_terms(text)), 'phrase': normalized(text)}
+    def _query(self, text):
+        return {'words': phrases(text), 'code': set(lexical_terms(text)),
+                'alias': self._dictionary.matches(text) if self._dictionary is not None else ()}

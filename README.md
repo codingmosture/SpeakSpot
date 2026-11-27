@@ -69,6 +69,7 @@ pnpm --dir frontend dev
 
 - **음성 인식:** 브라우저의 Web Speech API로 한국어 발화를 텍스트로 변환합니다. Chrome과 마이크가 필요합니다.
 - **PDF 분석:** Docling으로 강조 좌표와 OCR 블록을 추출합니다. PyMuPDF에서 읽은 제목, 글꼴, 도식의 텍스트와 숫자를 검색 단서로 추가합니다.
+  PDF에 한글·영문 또는 약어·원어가 함께 표기돼 있으면 그 문서의 용어 단서로 등록합니다.
 - **페이지 탐색:** BGE-M3와 KIWI로 후보를 찾고, 새 제목과 본문의 고유 표현이나 도식에 반복되는 숫자로 페이지 전환을 확인합니다.
   제목이 같은 페이지나 중간 페이지를 건너뛰는 전환에는 추가 단서를 사용합니다.
 - **블록 강조:** 같은 항목에 속하는 블록의 점수와 최근 발화에서 확인한 용어를 함께 반영해 현재 페이지에서 블록 하나를 강조합니다.
@@ -87,7 +88,7 @@ PDF 분석은 업로드할 때 수행합니다. 페이지가 많거나 스캔 �
 | `backend/main.py` | 문서 업로드와 발화 검색 API |
 | `backend/pdf.py` | PDF 구조 분석, OCR, 강조 좌표와 모델 준비 |
 | `backend/search.py`, `backend/page_ranking.py`, `backend/page_tracker.py` | 발화 검색, 페이지 점수와 이동 판단 |
-| `backend/lecture_*.py` | PDF 검색용 레이아웃, 용어와 도식 단서, 페이지 전환과 블록 추적 |
+| `backend/lecture_*.py`, `backend/document_terms.py` | PDF 검색용 레이아웃, 문서에서 추출한 용어와 도식 단서, 페이지 전환과 블록 추적 |
 | `backend/requirements.txt` | Python 의존성 |
 | `frontend/src/App.jsx` | 음성 인식, PDF 업로드와 뷰어 |
 | `frontend/src/style.css` | 화면 스타일 |

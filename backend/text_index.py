@@ -1,6 +1,6 @@
 """페이지와 블록을 검색할 때 사용할 용어 단서를 구축하고 점수를 계산한다."""
 from collections import Counter, defaultdict
-from functools import cached_property, lru_cache
+from functools import lru_cache
 from math import ceil, log
 import re
 from threading import Lock
@@ -60,6 +60,7 @@ class PageIndex:
             texts = list(dict.fromkeys(by_page[page]))
             body = [text for text in texts if counts[text.casefold()] < cutoff]
             self.texts.append(' '.join(body or texts))
+        self._coverage_index = self._index_terms()
 
     # 페이지 본문을 일부 겹치는 검색 단위로 나누고 시작 위치를 기록한다.
     def passages(self, size=72, stride=52):
@@ -74,8 +75,7 @@ class PageIndex:
         return passages, starts
 
     # 용어가 나타난 페이지와 용어의 희소성 가중치를 기록한다.
-    @cached_property
-    def _coverage_index(self):
+    def _index_terms(self):
         postings = defaultdict(list)
         for page, text in enumerate(self.texts):
             for term in set(lexical_terms(text)):
@@ -269,7 +269,8 @@ class LectureAnchors:
     # 최근 발화로 용어, 제목, 도식 숫자의 일치 증거를 계산한다.
     def observe(self, short, long, *, literal_heading=False):
         weights = np.zeros(len(self.columns))
-        weights[[self.columns[key] for key in self._keys(long) if key in self.columns]] = .48
+        if short != long:
+            weights[[self.columns[key] for key in self._keys(long) if key in self.columns]] = .48
         weights[[self.columns[key] for key in self._keys(short) if key in self.columns]] = 1.
         heading = self._heading_scores(weights, literal_heading)
         numbers = {int(number) for number in _NUMBERS.findall(short)} if _NUMERIC_TALK.search(long) else set()
@@ -336,7 +337,8 @@ class BlockPhrases:
 
     # 최근 발화와 앞 문맥에서 찾은 표현을 블록별 점수로 환산한다.
     def scores(self, short, long, blocks):
-        recent, context = self._query(short), self._query(long)
+        recent = self._query(short)
+        context = recent if short == long else self._query(long)
         for page, count in blocks.items():
             evidence = np.zeros(count)
             for key, (kind, weight, indexes) in self.pages[page].items():

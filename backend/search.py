@@ -1,5 +1,6 @@
 """Page tracking and block highlights from streaming speech."""
 from collections import Counter, OrderedDict, defaultdict, deque
+from copy import copy
 from dataclasses import dataclass
 from functools import lru_cache
 from threading import Lock
@@ -8,7 +9,7 @@ from time import monotonic_ns
 import numpy as np
 
 from lecture_matching import LectureMatching, PageTracker
-from pdf import Block
+from pdf import Block as Block
 from text_index import PageIndex, lexical_terms, normalize
 
 _MODEL = 'BAAI/bge-m3'
@@ -79,6 +80,11 @@ def page_encoder(*, local_files_only=True):
     torch.set_num_threads(min(torch.get_num_threads(), 4))
     return SentenceTransformer(_MODEL, device='cpu', local_files_only=local_files_only)
 
+# 저장된 색인을 열 때도 발화에 사용할 모델을 미리 준비한다.
+def prepare_encoder():
+    with _ENCODER_LOCK:
+        page_encoder()
+
 
 # 텍스트를 BGE-M3 벡터로 변환하고 모델 호출을 직렬화한다.
 def _embed(texts):
@@ -95,17 +101,8 @@ def _clock_ms():
 
 class PassageSearch:
     # 한 문서의 페이지 검색 인덱스, 블록 벡터, 발화 상태를 준비한다.
-    def __init__(self, blocks, page_count, *, native_layout=None):
+    def __init__(self, blocks, page_count, *, native_layout=None, index_embed=None):
         self.page_count = page_count
-        self.current_page = 1
-        self._lock = Lock()
-        self._sequence = -1
-        self._finalized = OrderedDict()
-        self._recognition_cycle = None
-        self._committed = deque(maxlen=_CONTEXT_WORDS)
-        self._last_query = ()
-        self._next_sample = 0
-
         page_text = defaultdict(list)
         self._block_indices = defaultdict(list)
         self._block_ids = []
@@ -114,15 +111,36 @@ class PassageSearch:
             self._block_indices[block.page].append(index)
             self._block_ids.append(block.block_id)
         self._index = PageIndex(page_text)
-        self._highlight = BlockHighlight()
+        embed_index = index_embed or _embed
 
         if page_count > 1:
             passages, self._passage_starts = self._index.passages()
-            self._page_vectors = _embed(passages)
-        self._block_vectors = _embed([' '.join(block.text.split()[:72]) for block in blocks])
+            self._page_vectors = embed_index(passages)
+        self._block_vectors = embed_index([' '.join(block.text.split()[:72]) for block in blocks])
         self._block_terms = self._distinctive_block_terms(blocks)
-        self._lecture = (LectureMatching(self._index.pages, blocks, native_layout, _embed, self._block_vectors)
+        self._lecture = (LectureMatching(self._index.pages, blocks, native_layout, embed_index, self._block_vectors)
                          if native_layout is not None else None)
+        self._reset_stream()
+
+    # 같은 PDF의 색인과 벡터로 독립된 발화 검색 세션을 시작한다.
+    def new_session(self):
+        session = copy(self)
+        if self._lecture is not None:
+            session._lecture = self._lecture.new_session()
+        session._reset_stream()
+        return session
+
+    # 발화 순서, 최근 문맥, 현재 페이지와 강조 상태를 세션마다 초기화한다.
+    def _reset_stream(self):
+        self.current_page = 1
+        self._lock = Lock()
+        self._sequence = -1
+        self._finalized = OrderedDict()
+        self._recognition_cycle = None
+        self._committed = deque(maxlen=_CONTEXT_WORDS)
+        self._last_query = ()
+        self._next_sample = 0
+        self._highlight = BlockHighlight()
         self._tracker = PageTracker(self._index.pages) if self._lecture is None else None
 
     # 유효한 수동 페이지를 검색 기준으로 적용하고 강조 상태를 초기화한다.
@@ -177,7 +195,9 @@ class PassageSearch:
         vector = vectors[0]
         page, lecture = None, None
         if multiple_pages or self._lecture is not None:
-            coverage = .65 * self._index.coverage(short) + .35 * self._index.coverage(long)
+            short_coverage = self._index.coverage(short)
+            long_coverage = short_coverage if short == long else self._index.coverage(long)
+            coverage = .65 * short_coverage + .35 * long_coverage
             base = self._page_scores(vector, coverage) if multiple_pages else None
         if self._lecture is not None:
             page, weights, memory = self._lecture.observe(

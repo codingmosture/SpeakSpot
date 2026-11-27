@@ -1,5 +1,6 @@
 """Causal page transitions and block tracking for a loaded lecture PDF."""
 from collections import defaultdict
+from copy import copy
 from dataclasses import dataclass
 from itertools import chain
 import re
@@ -89,6 +90,7 @@ class LectureMatching:
             by_page[block.page].append(block)
             page_block_vectors[block.page].append(vector)
         profiles = {page: build_one(by_page[page], layout.get(page, ())) for page in pages}
+        headings = {page: normalized(profile.header) for page, profile in profiles.items()}
         terms = None
         if policy.document_pairs:
             lines = (line['text'] for rows in layout.values() for line in rows if line['box'][1] < .93)
@@ -100,7 +102,7 @@ class LectureMatching:
         self._title_blocks, self._body = {}, {}
         for page, rows in by_page.items():
             vectors = page_block_vectors[page]
-            header = normalized(profiles[page].header)
+            header = headings[page]
             heading_text = [normalized(row.text) == header for row in rows]
             self._title_blocks[page] = np.array([
                 bool(header and match and row.rects and block_box(row)[1] < .18)
@@ -113,21 +115,31 @@ class LectureMatching:
                         for field in fields for page in pages]
         self._vectors = embed(descriptions).reshape(3, len(pages), -1) if len(pages) > 1 or pages[0] != 1 else None
 
-        headers = [normalized(profiles[page].header) for page in pages]
+        headers = [headings[page] for page in pages]
         self._siblings = np.array([[bool(first) and first == second for second in headers] for first in headers])
         self._front = np.arange(len(pages))
         for i in range(1, len(pages)):
             if self._siblings[i, i-1] and pages[i-1] + 1 == pages[i]:
                 self._front[i] = self._front[i-1]
         self._lead = self._front == np.arange(len(pages))
-        self._baseline = PageTracker(pages)
-        self._motion = PageTracker(pages)
+        self._reset_tracking()
+
+    # 페이지·블록 색인을 공유하고 발화에 따라 바뀌는 상태는 새로 생성한다.
+    def new_session(self):
+        session = copy(self)
+        session._reset_tracking()
+        return session
+
+    # 새 발화가 시작될 때 사용할 이동 후보와 블록 문맥을 초기화한다.
+    def _reset_tracking(self):
+        self._baseline = PageTracker(self.pages)
+        self._motion = PageTracker(self.pages)
         self._baseline_page = 1
         self._since = None
         self._protected = None
         self._last_page_at = None
-        self._title_at = np.full(len(pages), -np.inf)
-        self._last_title = np.zeros(len(pages), dtype=bool)
+        self._title_at = np.full(len(self.pages), -np.inf)
+        self._last_title = np.zeros(len(self.pages), dtype=bool)
         self._block_at = None
         self._block_state = None
         self._block_costs = {}

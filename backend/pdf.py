@@ -59,9 +59,10 @@ def compact_lines(lines):
         item = clean(row['text'])
         if not item:
             continue
-        if (i and lines[i-1]['group'] == row['group'] and text and row['box'][1] - lines[i-1]['box'][3] < .032
-                and row['box'][0] <= lines[i-1]['box'][0] + .035
-                and abs(row['size'] - lines[i-1]['size']) <= .15
+        previous = lines[i - 1] if i else None
+        if (previous is not None and previous['group'] == row['group'] and text
+                and row['box'][1] - previous['box'][3] < .032 and row['box'][0] <= previous['box'][0] + .035
+                and abs(row['size'] - previous['size']) <= .15
                 and not PREFIX.match(row['text'])):
             text[-1] += ' ' + item
         else:
@@ -82,7 +83,8 @@ def build_one(rows, raw_lines):
     title = clean(best['text'])
     body = [line for line in lines if line is not best]
     raw = compact_lines(body)
-    old = unique(clean(row.text) for row in rows if normalized(row.text) != normalized(title))
+    title_key = normalized(title)
+    old = unique(clean(row.text) for row in rows if normalized(row.text) != title_key)
     use_old = len(raw) <= 2 or sum(len(text) for text in raw) < .35 * sum(len(text) for text in old)
     if use_old:
         raw = unique([*raw, *old])
@@ -101,7 +103,7 @@ def build_one(rows, raw_lines):
         pieces = [f'{side}에 {" · ".join(text[:5])}'
                   for side, text in zip(NEIGHBOR_SEPARATORS, labels, strict=True) if text]
         order = ' ; '.join(pieces)
-        structured = f'{title}. 도식: {order}. 아래에서 위로 {"; ".join(p for p in reversed(pieces))}.'
+        structured = f'{title}. 도식: {order}. 아래에서 위로 {"; ".join(reversed(pieces))}.'
     else:
         grouped = []
         pending = []
@@ -113,9 +115,9 @@ def build_one(rows, raw_lines):
         if pending:
             grouped.append(' · '.join(unique(pending)[:8]))
         if use_old or not grouped:
-            grouped = raw[:16]
+            grouped = raw
         structured = f'{title}. {" / ".join(grouped[:10])}'
-    core = unique([*map(lambda line: clean(line['text']), keys), *raw[:10]])[:12]
+    core = unique([*(clean(line['text']) for line in keys), *raw[:10]])[:12]
     native = f'{title}. {" / ".join(raw[:20])}'
     focus = f'{title}. {" · ".join(core)}'
     return IndexPage(title, native, structured, focus)
@@ -244,8 +246,8 @@ def parse_pdf(data, *, include_layout=False):
     repeated = {pattern for pattern, pages in recurring.items() if len(pages) > 1}
     blocks = []
     for item, _ in items:
-        text = item.export_to_markdown(doc=document) if isinstance(item, TableItem) else getattr(item, 'text', '')
-        if not text.strip() or item.label in furniture or (
+        text = (item.export_to_markdown(doc=document) if isinstance(item, TableItem) else getattr(item, 'text', '')).strip()
+        if not text or item.label in furniture or (
             item.content_layer == ContentLayer.FURNITURE and _pattern(text) in repeated):
             continue
         by_page = defaultdict(list)
@@ -257,7 +259,7 @@ def parse_pdf(data, *, include_layout=False):
             if rect[0] < rect[2] and rect[1] < rect[3]:
                 by_page[prov.page_no].append(rect)
         for page, rects in by_page.items():
-            blocks.append(Block(f'p{page:04d}_b{len(blocks)+1:04d}', page, text.strip(), rects))
+            blocks.append(Block(f'p{page:04d}_b{len(blocks)+1:04d}', page, text, rects))
     if not blocks:
         raise ValueError('PDF에서 읽을 수 있는 본문을 찾지 못했습니다.')
     pages = len(document.pages)

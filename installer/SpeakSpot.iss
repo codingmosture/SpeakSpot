@@ -2,7 +2,7 @@
   #error Build this installer with Build-Windows.ps1.
 #endif
 #ifndef AppVersion
-  #define AppVersion "1.0.3"
+  #define AppVersion "1.0.4"
 #endif
 #define DesktopAppId "Codingmosture.SpeakSpot.Desktop"
 

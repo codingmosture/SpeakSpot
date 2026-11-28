@@ -1,7 +1,7 @@
 {
   "name": "speakspot",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.0.4",
   "type": "module",
   "scripts": { "dev": "vite", "build": "vite build" },
   "dependencies": { "react": "19.3.1", "react-dom": "19.3.1", "pdfjs-dist": "5.4.296" },

@@ -644,7 +644,7 @@ function App() {
       matchedPageRef.current = 1
       setPdf({ ...local, generation: work.current.generation }); setDocument(doc)
       setNotes(session?.notes ?? []); setActiveNote(null)
-      showPage(initialPage, 'top'); setHighlight(null); setCaption('')
+      showPage(initialPage, saved ? 'bottom' : 'top'); setHighlight(null); setCaption('')
       if (saved || initialPage > 1) correctPage(initialPage, Boolean(saved))
       if (!saved && await writeSession()) await storeSearchSnapshot(doc).catch(() => {})
     } catch (err) {
